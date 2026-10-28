@@ -1,0 +1,1142 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#070b14">
+<title>GEA Guatemala · Control de Asistencia y Rastreo GPS</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%2338bdf8' d='M12 2 4 5v6c0 5 3.4 9 8 11 4.6-2 8-6 8-11V5l-8-3Z'/%3E%3C/svg%3E">
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    darkMode: 'class',
+    theme: { extend: {
+      fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'] },
+      colors: { ink: { 950: '#070b14', 900: '#0b1220', 850: '#0f1729', 800: '#131c31', 700: '#1b2640' } }
+    } }
+  };
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!-- Leaflet (mapas) -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- Chart.js y SheetJS -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<!-- Firebase (Auth + Realtime Database) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<style>
+  html { color-scheme: dark; }
+  body { background: radial-gradient(1200px 600px at 85% -10%, rgba(56,189,248,.08), transparent), #070b14; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  input[type=date], input[type=time] { color-scheme: dark; }
+  .tbl th { position: sticky; top: 0; background: #0f1729; z-index: 1; }
+  .leaflet-container { background: #0b1220; font-family: inherit; }
+  .leaflet-tooltip { background: #0f1729; color: #e2e8f0; border: 1px solid #334155; box-shadow: none; }
+  .leaflet-tooltip-top:before { border-top-color: #334155; }
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: #0f1729; color: #e2e8f0; }
+  .fade-in { animation: fade .25s ease; }
+  @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+</style>
+</head>
+<body class="bg-ink-950 font-sans text-slate-200 antialiased">
+
+<div id="backdrop" data-act="menu" class="fixed inset-0 z-30 hidden bg-black/60 lg:hidden"></div>
+<aside id="sidebar" class="fixed inset-y-0 left-0 z-40 flex w-64 -translate-x-full transform flex-col border-r border-slate-800 bg-ink-900 transition-transform lg:translate-x-0">
+  <div class="flex items-center gap-3 px-5 py-5">
+    <div class="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-sky-500 to-emerald-400 text-slate-950">
+      <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 4.5 3.4 7.8 8 9 4.6-1.2 8-4.5 8-9V6l-8-3Z"/><path d="m9 12 2 2 4-4"/></svg>
+    </div>
+    <div class="leading-tight">
+      <p class="text-sm font-semibold text-white">GEA Guatemala</p>
+      <p class="text-xs text-slate-500">Mecánica de Suelos</p>
+    </div>
+  </div>
+  <nav id="nav" class="flex-1 space-y-1 px-3"></nav>
+  <div id="src-status" class="m-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-xs text-slate-400"></div>
+</aside>
+
+<div class="min-h-screen lg:pl-64">
+  <header class="sticky top-0 z-20 border-b border-slate-800/80 bg-ink-950/85 backdrop-blur">
+    <div class="flex flex-wrap items-center gap-3 px-4 py-3 lg:px-8">
+      <button id="btn-menu" data-act="menu" class="rounded-lg border border-slate-700 p-2 text-slate-300 lg:hidden" aria-label="Menú"></button>
+      <div class="min-w-0 flex-1">
+        <h1 id="page-title" class="truncate text-lg font-semibold text-white"></h1>
+        <p id="page-sub" class="truncate text-xs text-slate-500"></p>
+      </div>
+      <div id="hdr-actions" class="flex flex-wrap items-center gap-2"></div>
+    </div>
+  </header>
+  <main id="view" class="px-4 py-6 lg:px-8"></main>
+</div>
+
+<div id="dropzone" class="pointer-events-none fixed inset-0 z-[60] hidden place-items-center bg-sky-500/10 backdrop-blur-sm">
+  <div class="rounded-3xl border-2 border-dashed border-sky-400 bg-ink-900/90 px-10 py-8 text-center text-sky-200">
+    <p class="text-lg font-semibold">Suelta aquí tu archivo Excel / CSV</p>
+    <p class="mt-1 text-sm text-slate-400">Se procesará automáticamente</p>
+  </div>
+</div>
+<div id="modal-root"></div>
+<div id="toast-root" class="pointer-events-none fixed bottom-4 right-4 z-[70] flex max-w-sm flex-col gap-2"></div>
+<input id="file-input" type="file" multiple accept=".xlsx,.xlsm,.xls,.csv" class="hidden">
+
+<script>
+/*CORE_START*/
+/* =====================================================================
+   NÚCLEO DE DATOS (sin DOM): lectura con SheetJS, normalización de
+   fechas/horas/coordenadas, geocercas, incidencias y rastreo GPS.
+   ===================================================================== */
+const Core = (() => {
+  'use strict';
+  const pad = n => String(n).padStart(2, '0');
+  const str = v => (v === null || v === undefined) ? '' : String(v).trim();
+  const lc = v => str(v).toLowerCase();
+  const norm = s => str(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  const mkKey = (y, m, d) => y + '-' + pad(m) + '-' + pad(d);
+  const dayNum = (y, m, d) => Math.floor(Date.UTC(y, m - 1, d) / 86400000);
+  const numKey = n => { const t = new Date(n * 86400000); return mkKey(t.getUTCFullYear(), t.getUTCMonth() + 1, t.getUTCDate()); };
+  const keyNum = k => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(k || ''); return m ? dayNum(+m[1], +m[2], +m[3]) : NaN; };
+  const EPOCH = Date.UTC(1899, 11, 30);
+
+  function todayKey() { const d = new Date(); return mkKey(d.getFullYear(), d.getMonth() + 1, d.getDate()); }
+  function weekRange(k) { const n = keyNum(k); const dow = (new Date(n * 86400000).getUTCDay() + 6) % 7; return { from: numKey(n - dow), to: numKey(n - dow + 6) }; }
+  function monthRange(k) { const y = +k.slice(0, 4), m = +k.slice(5, 7); return { from: mkKey(y, m, 1), to: mkKey(y, m, new Date(Date.UTC(y, m, 0)).getUTCDate()) }; }
+  function daysBetween(a, b) { const out = []; for (let n = keyNum(a); n <= keyNum(b); n++) out.push(numKey(n)); return out; }
+
+  function serialParts(n) { const t = new Date(EPOCH + Math.floor(n) * 86400000); return { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate() }; }
+  function validYMD(y, m, d) { if (!(y > 1990 && y < 2100 && m >= 1 && m <= 12 && d >= 1 && d <= 31)) return false; return new Date(Date.UTC(y, m - 1, d)).getUTCMonth() === m - 1; }
+
+  /* Fecha → {y,m,d,src}. src: 'serial' (número de Excel) | 'text' | 'date'. Texto ambiguo: MDY por defecto. */
+  function parseDate(v, order) {
+    if (v === null || v === undefined || v === '') return null;
+    if (v instanceof Date && !isNaN(v)) return { y: v.getFullYear(), m: v.getMonth() + 1, d: v.getDate(), src: 'date' };
+    if (typeof v === 'number') { if (!isFinite(v) || v < 20000 || v > 80000) return null; return Object.assign(serialParts(v), { src: 'serial' }); }
+    const s = str(v); if (!s) return null;
+    if (/^\d{5}(\.\d+)?$/.test(s)) return Object.assign(serialParts(parseFloat(s)), { src: 'serial' });
+    let m = s.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
+    if (m) { const o = { y: +m[1], m: +m[2], d: +m[3], src: 'text' }; return validYMD(o.y, o.m, o.d) ? o : null; }
+    m = s.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})/);
+    if (m) {
+      let a = +m[1], b = +m[2], y = +m[3]; if (y < 100) y += 2000;
+      let mo, d;
+      if (a > 12 && b <= 12) { d = a; mo = b; }
+      else if (b > 12 && a <= 12) { mo = a; d = b; }
+      else if ((order || 'MDY') === 'DMY') { d = a; mo = b; } else { mo = a; d = b; }
+      return validYMD(y, mo, d) ? { y, m: mo, d, src: 'text' } : null;
+    }
+    return null;
+  }
+
+  /* Hora → segundos del día (acepta fracción de día de Excel o texto HH:MM[:SS] [AM/PM]) */
+  function parseTime(v) {
+    if (v === null || v === undefined || v === '') return null;
+    if (typeof v === 'number') { if (!isFinite(v)) return null; return Math.round((v - Math.floor(v)) * 86400) % 86400; }
+    const s = str(v);
+    let m = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp]\.?[Mm]\.?)?$/);
+    if (m) {
+      let h = +m[1]; const mi = +m[2], se = +(m[3] || 0); const ap = m[4];
+      if (ap) { const p = ap[0].toLowerCase() === 'p'; if (p && h < 12) h += 12; if (!p && h === 12) h = 0; }
+      if (h > 23 || mi > 59) return null; return h * 3600 + mi * 60 + se;
+    }
+    if (/^\d*\.\d+$/.test(s)) return parseTime(parseFloat(s));
+    return null;
+  }
+  const hm = sec => sec == null ? '—' : pad(Math.floor(sec / 3600) % 24) + ':' + pad(Math.floor(sec % 3600 / 60));
+  const hms = sec => sec == null ? '—' : hm(sec) + ':' + pad(sec % 60);
+  const wrapHours = (a, b) => ((((b - a) % 86400) + 86400) % 86400) / 3600;
+  const round2 = n => Math.round(n * 100) / 100;
+  function parseNum(v) {
+    if (v === null || v === undefined || v === '') return null;
+    if (typeof v === 'number') return isFinite(v) ? v : null;
+    const n = parseFloat(str(v).replace(',', '.')); return isNaN(n) ? null : n;
+  }
+
+  /* Coordenadas "14.49, -90.56" → {valid, lat, lng}. 0,0 = sin ubicación */
+  function parseGeo(v) {
+    const s = str(v);
+    if (!s) return { raw: '', valid: false, empty: true };
+    const m = s.match(/(-?\d+(?:\.\d+)?)\s*[,;\s]\s*(-?\d+(?:\.\d+)?)/);
+    if (!m) return { raw: s, valid: false };
+    const lat = +m[1], lng = +m[2];
+    if (Math.abs(lat) < 1e-6 && Math.abs(lng) < 1e-6) return { raw: s, lat, lng, valid: false, zero: true };
+    if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return { raw: s, valid: false };
+    return { raw: s, lat, lng, valid: true };
+  }
+  function haversine(a, b, c, d) {
+    const R = 6371000, r = Math.PI / 180, dLa = (c - a) * r, dLo = (d - b) * r;
+    const x = Math.sin(dLa / 2) ** 2 + Math.cos(a * r) * Math.cos(c * r) * Math.sin(dLo / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(x));
+  }
+  const fmtDist = m => m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(1) + ' km';
+  function median(a) { if (!a.length) return NaN; const s = a.slice().sort((x, y) => x - y), h = s.length >> 1; return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2; }
+
+  /* ---------- Lectura de libros ---------- */
+  function detectKind(name, keys) {
+    const k = new Set(keys), n = norm(name);
+    if (k.has('horas_ordinarias') || k.has('hora_salida') || k.has('fecha_salida')) return 'general';
+    if (k.has('coordenadas') || k.has('email_empleado')) return 'rastreo';
+    if (k.has('first_name') || k.has('last_name') || k.has('seguros_de_accidentes')) return 'base';
+    if (n.indexOf('rastreo') >= 0) return 'rastreo';
+    if (n.indexOf('general') >= 0) return 'general';
+    if (n.indexOf('base') >= 0) return 'base';
+    return null;
+  }
+  function parseWorkbook(buf, fileName) {
+    const isCsv = /\.(csv|txt)$/i.test(fileName || '');
+    const wb = XLSX.read(buf, isCsv ? { type: 'array', raw: true } : { type: 'array' });
+    const sheets = {}, found = [];
+    wb.SheetNames.forEach(name => {
+      const ws = wb.Sheets[name]; if (!ws) return;
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
+      const nrows = rows.map(r => { const o = {}; Object.keys(r).forEach(k => { o[norm(k)] = r[k]; }); return o; })
+        .filter(o => Object.keys(o).some(k => str(o[k]) !== ''));
+      if (!nrows.length) return;
+      const kind = detectKind(name, Object.keys(nrows[0]));
+      if (!kind) return;
+      if (!sheets[kind] || sheets[kind].length < nrows.length) sheets[kind] = nrows;
+      found.push(name + ' → ' + kind);
+    });
+    return { wb, sheets, found, isXlsx: !isCsv };
+  }
+
+  /* ---------- Modelo ---------- */
+  function buildModel(raw, cfg, todayK) {
+    cfg = cfg || {}; todayK = todayK || todayKey();
+    const order = cfg.textDateOrder || 'MDY', fixOn = cfg.fixDates !== false;
+    const maxOrd = +cfg.maxOrd || 12, maxExtra = +cfg.maxExtra || 12, defRadius = +cfg.defaultRadius || 1000;
+    const todayN = keyNum(todayK);
+
+    // Empleados
+    const empMap = new Map(), employees = [];
+    const mkEmp = o => {
+      const e = Object.assign({ email: '', first: '', last: '', puesto: '', direccion: '', cell: '', seguro: '', course: '', seccion: '', inBase: false }, o);
+      e.name = (e.first + ' ' + e.last).replace(/\s+/g, ' ').trim() || (e.email ? e.email.split('@')[0] : 'Sin nombre');
+      e.initials = ((e.first[0] || '') + (e.last[0] || '')).toUpperCase() || e.name.slice(0, 2).toUpperCase();
+      return e;
+    };
+    (raw.base || []).forEach(r => {
+      const email = lc(r.email), first = str(r.first_name), last = str(r.last_name);
+      if (!email && !first && !last) return;
+      const e = mkEmp({ email, first, last, puesto: str(r.puesto), direccion: str(r.direccion), cell: str(r.cell), seguro: str(r.seguros_de_accidentes), course: str(r.course).toUpperCase(), seccion: str(r.seccion_activa).toUpperCase(), inBase: true });
+      employees.push(e); if (email) empMap.set(email, e);
+    });
+    const ensureEmp = (email, course) => {
+      let e = empMap.get(email);
+      if (!e) { e = mkEmp({ email, course: course || '' }); empMap.set(email, e); employees.push(e); }
+      return e;
+    };
+
+    // Rango de referencia para detectar fechas con día/mes invertidos
+    const refNums = [];
+    (raw.rastreo || []).forEach(r => { const p = parseDate(r.fecha, order); if (p) refNums.push(dayNum(p.y, p.m, p.d)); });
+    (raw.general || []).forEach(r => ['date', 'fecha_salida', 'fecha_entrada_extra', 'fecha_salida_extra'].forEach(k => {
+      const p = parseDate(r[k], order); if (p && (p.src !== 'serial' || p.d > 12)) refNums.push(dayNum(p.y, p.m, p.d));
+    }));
+    const ref = refNums.length ? { lo: refNums.reduce((a, b) => Math.min(a, b)), hi: refNums.reduce((a, b) => Math.max(a, b)) } : { lo: todayN - 45, hi: todayN };
+    const distTo = n => n < ref.lo ? ref.lo - n : n > ref.hi ? n - ref.hi : 0;
+    let fixedCount = 0, skipped = 0;
+    const getDate = v => {
+      const p = parseDate(v, order); if (!p) return null;
+      let q = p, fixed = false;
+      if (fixOn && p.src === 'serial' && p.d <= 12 && p.m !== p.d) {
+        if (distTo(dayNum(p.y, p.d, p.m)) < distTo(dayNum(p.y, p.m, p.d))) { q = { y: p.y, m: p.d, d: p.m }; fixed = true; }
+      }
+      return { key: mkKey(q.y, q.m, q.d), num: dayNum(q.y, q.m, q.d), fixed };
+    };
+
+    // Jornadas
+    const records = [];
+    (raw.general || []).forEach((r, i) => {
+      const email = lc(r.email), ent = getDate(r.date);
+      if (!email || !ent) { skipped++; return; }
+      const course = str(r.course).toUpperCase();
+      const entrySec = parseTime(r.time), exitSec = parseTime(r.hora_salida);
+      const ex = getDate(r.fecha_salida), xi = getDate(r.fecha_entrada_extra), xo = getDate(r.fecha_salida_extra);
+      const xinSec = parseTime(r.hora_entrada_extra), xoutSec = parseTime(r.hora_salida_extra);
+      const hasExit = exitSec != null, hasExtra = xinSec != null;
+      const estado = str(r.estado).toUpperCase() || (hasExit ? 'COMPLETADO' : 'PENDIENTE');
+      const ordR = parseNum(r.horas_ordinarias), extR = parseNum(r.horas_extras), totR = parseNum(r.horas_totales);
+      const calcOrd = (hasExit && entrySec != null) ? round2(wrapHours(entrySec, exitSec)) : null;
+      const calcExt = (hasExtra && xoutSec != null) ? round2(wrapHours(xinSec, xoutSec)) : null;
+      let ordEff = ordR == null ? (calcOrd || 0) : ordR, extEff = extR == null ? (calcExt || 0) : extR, negFix = false;
+      if (ordEff < 0) { ordEff = calcOrd != null ? calcOrd : 0; negFix = true; }
+      if (extEff < 0) { extEff = calcExt != null ? calcExt : 0; negFix = true; }
+      let totEff = (totR == null || totR < 0 || negFix) ? round2(ordEff + extEff) : totR;
+      if (totR != null && totR < 0) negFix = true;
+      const entryTs = ent.num * 86400 + (entrySec || 0);
+      const exitTs = (ex && hasExit) ? ex.num * 86400 + exitSec : null;
+      records.push({
+        id: str(r.id) || ('r' + i), email, course, dateKey: ent.key, entrySec,
+        exitKey: ex ? ex.key : null, exitSec, hasExit, hasExtra,
+        xinKey: xi ? xi.key : null, xinSec, xoutKey: xo ? xo.key : null, xoutSec,
+        geo: { entry: parseGeo(r.geolocalizacion), exit: hasExit ? parseGeo(r.geolocalizacion_salida) : null,
+               xin: hasExtra ? parseGeo(r.geolocalizacion_entrada_extra) : null,
+               xout: (hasExtra && xoutSec != null) ? parseGeo(r.geolocalizacion_salida_extra) : null },
+        ordR, extR, totR, ordEff, extEff, totEff, negFix, calcOrd, estado,
+        pending: !hasExit || estado.indexOf('PENDIENTE') >= 0,
+        entryTs, exitTs, exitBefore: exitTs != null && exitTs < entryTs - 60,
+        dateFixed: !!(ent.fixed || (ex && ex.fixed) || (xi && xi.fixed)), flags: [], inc: 0, incDanger: 0, incWarn: 0
+      });
+      if (ent.fixed || (ex && ex.fixed) || (xi && xi.fixed)) fixedCount++;
+    });
+    records.sort((a, b) => a.entryTs - b.entryTs);
+
+    // Centros automáticos por sitio (mediana de marcas válidas)
+    const byCourse = {};
+    records.forEach(rec => ['entry', 'exit', 'xin', 'xout'].forEach(k => {
+      const g = rec.geo[k]; if (!g || !g.valid) return;
+      const c = rec.course || (empMap.get(rec.email) || {}).course || '';
+      if (!byCourse[c]) byCourse[c] = { lat: [], lng: [] };
+      byCourse[c].lat.push(g.lat); byCourse[c].lng.push(g.lng);
+    }));
+    const centers = {};
+    Object.keys(byCourse).forEach(c => { centers[c] = { lat: median(byCourse[c].lat), lng: median(byCourse[c].lng), n: byCourse[c].lat.length }; });
+    const fence = course => {
+      const g = (cfg.geofences || {})[course] || {}, mode = g.mode || 'auto';
+      if (mode === 'off') return null;
+      const radius = parseNum(g.radius) || defRadius;
+      if (mode === 'manual' && parseNum(g.lat) !== null && parseNum(g.lng) !== null) return { lat: parseNum(g.lat), lng: parseNum(g.lng), radius, mode: 'manual' };
+      const c = centers[course]; return c ? { lat: c.lat, lng: c.lng, radius, mode: 'auto' } : null;
+    };
+    const stOf = (g, f) => {
+      if (!g) return null;
+      const o = Object.assign({}, g);
+      if (!g.valid) o.st = 'none';
+      else if (!f) o.st = 'ok';
+      else { o.dist = haversine(g.lat, g.lng, f.lat, f.lng); o.st = o.dist > f.radius ? 'out' : 'ok'; }
+      return o;
+    };
+
+    // Estados de ubicación e incidencias
+    const LBL = { entry: 'Entrada', exit: 'Salida', xin: 'Entrada extra', xout: 'Salida extra' };
+    records.forEach(rec => {
+      const emp = ensureEmp(rec.email, rec.course);
+      if (!rec.course) rec.course = emp.course;
+      const f = fence(rec.course);
+      ['entry', 'exit', 'xin', 'xout'].forEach(k => { rec.geo[k] = stOf(rec.geo[k], f); });
+      const fl = rec.flags, add = (code, lvl, txt, detail) => fl.push({ code, lvl, txt, detail: detail || '' });
+      ['entry', 'exit', 'xin', 'xout'].forEach(k => {
+        const g = rec.geo[k]; if (!g) return;
+        if (g.st === 'none') add('SIN_UBIC', 'danger', LBL[k] + ' sin ubicación', g.zero ? 'Coordenadas 0,0' : 'Sin coordenadas válidas');
+        else if (g.st === 'out') add('FUERA_RANGO', 'warn', LBL[k] + ' fuera de rango', 'A ' + fmtDist(g.dist) + ' del sitio');
+      });
+      if (!rec.hasExit) {
+        if (rec.dateKey < todayK) add('SIN_SALIDA', 'danger', 'Salida no marcada', 'Jornada sin cierre');
+        else add('EN_CURSO', 'info', 'Jornada en curso');
+      }
+      if (rec.negFix) add('HORAS_NEG', 'danger', 'Horas negativas', 'Reportado ' + (rec.ordR != null ? rec.ordR : '') + ' h; corregido a ' + rec.totEff + ' h');
+      if (rec.ordEff > maxOrd) add('JORNADA_LARGA', 'warn', 'Jornada de ' + round2(rec.ordEff) + ' h', 'Supera ' + maxOrd + ' h ordinarias');
+      if (rec.extEff > maxExtra) add('EXTRA_LARGA', 'warn', 'Extra de ' + round2(rec.extEff) + ' h', 'Posible cierre olvidado');
+      if (rec.exitBefore) add('SALIDA_ANTES', 'warn', 'Salida anterior a la entrada', '');
+      if (rec.dateFixed) add('FECHA_CORREGIDA', 'info', 'Fecha corregida (día/mes)', 'El Excel guardó día y mes invertidos');
+      rec.incDanger = fl.filter(x => x.lvl === 'danger').length;
+      rec.incWarn = fl.filter(x => x.lvl === 'warn').length;
+      rec.inc = rec.incDanger + rec.incWarn;
+    });
+
+    // Rastreo GPS
+    const track = {}, lastPoint = {}; let trackCount = 0;
+    (raw.rastreo || []).forEach(r => {
+      const email = lc(r.email_empleado || r.email || r.id), d = parseDate(r.fecha, order), sec = parseTime(r.hora), g = parseGeo(r.coordenadas);
+      if (!email || !d || sec == null) return;
+      const dk = mkKey(d.y, d.m, d.d);
+      if (!track[email]) track[email] = {};
+      if (!track[email][dk]) track[email][dk] = [];
+      track[email][dk].push({ email, dateKey: dk, sec, lat: g.lat, lng: g.lng, valid: g.valid });
+      trackCount++; ensureEmp(email, '');
+    });
+    Object.keys(track).forEach(email => {
+      const days = Object.keys(track[email]).sort();
+      days.forEach(d => track[email][d].sort((a, b) => a.sec - b.sec));
+      for (let i = days.length - 1; i >= 0 && !lastPoint[email]; i--) {
+        const pts = track[email][days[i]];
+        for (let j = pts.length - 1; j >= 0; j--) if (pts[j].valid) { lastPoint[email] = pts[j]; break; }
+      }
+    });
+
+    employees.sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    const courses = Array.from(new Set(employees.map(e => e.course).concat(records.map(r => r.course)).filter(Boolean))).sort();
+    return { employees, empMap, records, track, lastPoint, trackCount, courses, centers, fence,
+             warnings: { fixed: fixedCount, skipped }, ref };
+  }
+
+  function trackStats(pts) {
+    const v = pts.filter(p => p.valid); let dist = 0;
+    for (let i = 1; i < v.length; i++) { const s = haversine(v[i - 1].lat, v[i - 1].lng, v[i].lat, v[i].lng); if (s >= 12) dist += s; }
+    return { n: pts.length, valid: v.length, first: pts.length ? pts[0].sec : null, last: pts.length ? pts[pts.length - 1].sec : null, dist };
+  }
+
+  return { norm, str, lc, parseDate, parseTime, parseGeo, parseNum, haversine, parseWorkbook, buildModel, trackStats,
+           todayKey, keyNum, numKey, weekRange, monthRange, daysBetween, fmtDist, hm, hms, wrapHours, round2, median };
+})();
+/*CORE_END*/
+
+/* =====================================================================
+   INTERFAZ — parte A: estado, persistencia, carga de datos, exportación
+   ===================================================================== */
+(() => {
+'use strict';
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const TODAY = () => Core.todayKey();
+
+/* ------- Configuración editable ------- */
+// Si publicas el Excel junto a esta página (mismo repositorio), se carga solo. ¡Ojo: será público!
+const DEFAULT_FILES = ['datos.xlsx', 'GPS GEA-GUATEMALA.xlsx'];
+/* ===== FIREBASE: pega aquí los valores de tu proyecto para que TODOS los visitantes se conecten ===== */
+const FIREBASE_CONFIG = {
+  apiKey: '',
+  authDomain: '',
+  databaseURL: '',   // ej. https://TU-PROYECTO-default-rtdb.firebaseio.com
+  projectId: '',
+  appId: ''
+};
+const FIREBASE_PATH = 'gea';          // nodo de la base de datos donde se publican los datos
+const FIREBASE_REQUIRE_LOGIN = true;  // true: todos inician sesión (recomendado: los datos tienen información personal)
+const TILE_SOURCES = [
+  { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles &copy; Esri &mdash; Sources: Esri, TomTom, Garmin, FAO, NOAA, USGS, &copy; OpenStreetMap contributors, and the GIS User Community' }
+];
+const PALETTE = ['#38bdf8', '#34d399', '#fbbf24', '#f472b6', '#a78bfa', '#fb923c', '#2dd4bf', '#f87171'];
+const DOW = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+const MON = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+const DEFAULT_CFG = { fixDates: true, textDateOrder: 'MDY', maxOrd: 12, maxExtra: 12, defaultRadius: 1500, refreshSec: 60, autoPublish: false, geofences: {} };
+const LS = { cfg: 'gea_cfg_v1', raw: 'gea_raw_v1', fb: 'gea_fb_v1' };
+const loadLS = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
+const saveLS = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } };
+
+/* ------- Estado ------- */
+const S = {
+  view: 'dashboard', raw: null, model: null, wb: null,
+  cfg: Object.assign({}, DEFAULT_CFG, loadLS(LS.cfg, {})),
+  filter: { mode: 'month', from: '', to: '', course: '' },
+  att: { preset: 'today', from: TODAY(), to: TODAY(), course: '', estado: '', onlyInc: false, q: '' },
+  reg: { q: '', course: '' },
+  hist: { email: '', tab: 'jornadas', from: '', to: '', trackDate: '' },
+  source: { type: null, name: '', handle: null, url: '', sig: '', at: null },
+  charts: {}, maps: {}, _dash: null,
+  fb: { status: 'off', user: null, db: null, auth: null, ref: null, msg: '', applied: 0, meta: null, empty: false, notified: false }
+};
+
+/* ------- Formato ------- */
+const fmtD = k => { if (!k) return '—'; const p = k.split('-'); return p[2] + '/' + p[1] + '/' + p[0]; };
+const fmtDS = k => { const n = Core.keyNum(k); if (isNaN(n)) return k || '—'; const t = new Date(n * 86400000); return DOW[t.getUTCDay()] + ' ' + t.getUTCDate() + ' ' + MON[t.getUTCMonth()]; };
+const fmtH = h => (h == null || isNaN(h)) ? '—' : (Math.round(h * 100) / 100).toLocaleString('es-GT', { maximumFractionDigits: 2 }) + ' h';
+const fmtPct = p => p == null ? '—' : Math.round(p * 100) + '%';
+const hm = Core.hm;
+const BTN = 'inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800/70 px-3 py-2 text-sm font-medium text-slate-200 transition hover:bg-slate-700';
+const BTNP = 'inline-flex items-center gap-2 rounded-lg bg-sky-500 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:bg-sky-400';
+const INPC = 'rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500';
+const TONE = {
+  ok: 'bg-emerald-500/10 text-emerald-300 ring-emerald-500/25', bad: 'bg-rose-500/10 text-rose-300 ring-rose-500/25',
+  warn: 'bg-amber-500/10 text-amber-300 ring-amber-500/25', info: 'bg-sky-500/10 text-sky-300 ring-sky-500/25',
+  mute: 'bg-slate-500/10 text-slate-300 ring-slate-500/25'
+};
+const ICONS = {
+  dash: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  shield: '<path d="M12 3 4 6v6c0 4.5 3.4 7.8 8 9 4.6-1.2 8-4.5 8-9V6l-8-3Z"/><path d="m9 12 2 2 4-4"/>',
+  clip: '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4h6v2H9z"/><path d="m9 13 2 2 4-4"/>',
+  user: '<circle cx="10" cy="8" r="4"/><path d="M3 21v-1a6 6 0 0 1 6-6h2"/><circle cx="17" cy="17" r="3"/><path d="m21 21-1.8-1.8"/>',
+  upload: '<path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/>',
+  refresh: '<path d="M20 11a8 8 0 0 0-14.5-4M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.5 4M20 20v-4h-4"/>',
+  cog: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/>',
+  pin: '<path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11Z"/><circle cx="12" cy="10" r="2.5"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17" cy="9" r="2.5"/><path d="M17 14a5 5 0 0 1 4.5 5"/>',
+  alert: '<path d="M12 3 2 20h20L12 3Z"/><path d="M12 10v4M12 17h.01"/>',
+  check: '<path d="m5 12 5 5 9-10"/>',
+  download: '<path d="M12 4v12"/><path d="m7 11 5 5 5-5"/><path d="M4 20h16"/>',
+  plug: '<path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0V7ZM12 16v5"/>',
+  menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+  x: '<path d="M6 6l12 12M18 6 6 18"/>',
+  trend: '<path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/>',
+  chev: '<path d="m9 6 6 6-6 6"/>',
+  chevl: '<path d="m15 6-6 6 6 6"/>',
+  cloud: '<path d="M7 18a4 4 0 0 1-.5-7.97A6 6 0 0 1 18 9a4.5 4.5 0 0 1 0 9H7Z"/>'
+};
+const ico = (n, cls) => '<svg class="' + (cls || 'h-5 w-5') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + (ICONS[n] || '') + '</svg>';
+const badge = (t, tone) => '<span class="inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ' + (TONE[tone] || TONE.mute) + '">' + t + '</span>';
+const chip = (label, active, attrs) => '<button ' + attrs + ' class="rounded-lg px-3 py-1.5 text-xs font-medium transition ' + (active ? 'bg-sky-500/15 text-sky-300 ring-1 ring-sky-500/40' : 'bg-slate-800/60 text-slate-400 hover:text-slate-200') + '">' + label + '</button>';
+const pctColor = p => p == null ? 'bg-slate-700' : p >= 0.999 ? 'bg-emerald-400' : p > 0.5 ? 'bg-amber-400' : 'bg-rose-400';
+
+/* ------- Toasts ------- */
+function toast(msg, tone) {
+  const root = $('#toast-root'); if (!root) return;
+  const c = { ok: 'border-emerald-500/40 text-emerald-200', bad: 'border-rose-500/40 text-rose-200', info: 'border-sky-500/40 text-sky-200' }[tone || 'info'];
+  const el = document.createElement('div');
+  el.className = 'fade-in pointer-events-auto rounded-xl border bg-slate-900/95 px-4 py-3 text-sm shadow-xl ' + c;
+  el.textContent = msg; root.appendChild(el); setTimeout(() => el.remove(), 5000);
+}
+
+/* ------- Selectores de datos ------- */
+const inRange = (k, r) => !r || (k >= r.from && k <= r.to);
+function filterRange() {
+  const f = S.filter, t = TODAY();
+  switch (f.mode) {
+    case 'today': return { from: t, to: t };
+    case 'week': return Core.weekRange(t);
+    case 'month': return Core.monthRange(t);
+    case 'range': return { from: f.from || '0000-00-00', to: f.to || '9999-99-99' };
+    default: return null;
+  }
+}
+function rangeLabel() {
+  const r = filterRange(); if (!r) return 'Todo el historial cargado';
+  if (r.from === r.to) return fmtD(r.from);
+  return (r.from.charAt(0) === '0' ? 'Inicio' : fmtD(r.from)) + ' – ' + (r.to.charAt(0) === '9' ? 'hoy' : fmtD(r.to));
+}
+const recsIn = (range, course) => S.model.records.filter(r => inRange(r.dateKey, range) && (!course || r.course === course));
+const empOf = email => S.model && S.model.empMap.get(email);
+const empName = email => { const e = empOf(email); return e ? e.name : email; };
+/* ------- Persistencia y carga de datos ------- */
+function persistRaw() { if (S.raw && !saveLS(LS.raw, { base: S.raw.base, general: S.raw.general, rastreo: S.raw.rastreo })) console.warn('No se pudo guardar el caché local'); }
+function rebuild() {
+  S.model = S.raw ? Core.buildModel(S.raw, S.cfg, TODAY()) : null;
+  const M = S.model; if (!M) return;
+  if (!S.hist.email || !M.empMap.has(S.hist.email)) {
+    const cnt = {}; M.records.forEach(r => { cnt[r.email] = (cnt[r.email] || 0) + 1; });
+    const best = M.employees.slice().sort((a, b) => (cnt[b.email] || 0) - (cnt[a.email] || 0))[0];
+    S.hist.email = best ? best.email : '';
+  }
+}
+async function ingestBuffers(list, meta) {
+  const parsed = [];
+  for (const it of list) {
+    try { parsed.push(Object.assign({ name: it.name }, Core.parseWorkbook(it.buf, it.name))); }
+    catch (err) { console.error(err); toast('No se pudo leer ' + it.name + ': ' + err.message, 'bad'); }
+  }
+  let any = false; parsed.forEach(p => { if (Object.keys(p.sheets).length) any = true; });
+  if (!any) { toast('No se reconocieron las hojas BASE DE DATOS / DATOS GENERAL / RASTREO DIARIO en el archivo.', 'bad'); return false; }
+  const raw = { base: [], general: [], rastreo: [], epp: [] };
+  if (S.raw) { raw.base = S.raw.base || []; raw.general = S.raw.general || []; raw.rastreo = S.raw.rastreo || []; }
+  parsed.forEach(p => { Object.keys(p.sheets).forEach(k => { raw[k] = p.sheets[k]; }); if (p.isXlsx && Object.keys(p.sheets).length) S.wb = p.wb; });
+  S.raw = raw;
+  S.source = Object.assign({}, S.source, meta, { at: new Date() });
+  rebuild(); persistRaw();
+  renderView();
+  if (S.cfg.autoPublish && S.fb.user && meta && meta.type !== 'firebase') fbPublish(true);
+  const M = S.model;
+  toast('Datos procesados: ' + M.records.length + ' jornadas · ' + M.trackCount + ' puntos GPS · ' + M.employees.length + ' empleados' +
+    (M.warnings.fixed ? ' · ' + M.warnings.fixed + ' fechas corregidas' : ''), 'ok');
+  return true;
+}
+async function loadFromInput(files) {
+  const list = [];
+  for (const f of files) list.push({ buf: await f.arrayBuffer(), name: f.name });
+  if (list.length) { await ingestBuffers(list, { type: 'file', name: list.map(x => x.name).join(', '), handle: null, url: '', sig: '' }); stopTimer(); }
+}
+async function connectFile() {
+  if (!window.showOpenFilePicker) { toast('Tu navegador no permite conectar archivos (usa Chrome o Edge). Usa "Cargar Excel".', 'bad'); return; }
+  try {
+    const hs = await window.showOpenFilePicker({ types: [{ description: 'Excel / CSV', accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx', '.xlsm'], 'application/vnd.ms-excel': ['.xls'], 'text/csv': ['.csv'] } }] });
+    const f = await hs[0].getFile();
+    const ok = await ingestBuffers([{ buf: await f.arrayBuffer(), name: f.name }], { type: 'handle', name: f.name, handle: hs[0], url: '', sig: f.lastModified + ':' + f.size });
+    if (ok) { startTimer(); toast('Archivo conectado: se actualizará solo cada ' + S.cfg.refreshSec + ' s cuando cambie.', 'info'); }
+  } catch (e) { if (e && e.name !== 'AbortError') toast('No se pudo conectar: ' + e.message, 'bad'); }
+}
+function hashBuf(buf) {
+  const u = new Uint8Array(buf); let h = 2166136261; const step = Math.max(1, Math.floor(u.length / 200000));
+  for (let i = 0; i < u.length; i += step) { h ^= u[i]; h = Math.imul(h, 16777619); }
+  return (h >>> 0).toString(16);
+}
+const bust = u => u + (u.indexOf('?') >= 0 ? '&' : '?') + '_t=' + Date.now();
+async function pollSource(manual) {
+  const s = S.source;
+  if (s.type === 'firebase') { if (manual) toast('Conectado a Firebase en tiempo real: no hace falta actualizar.', 'info'); return; }
+  if (!s.type || s.type === 'file') { if (manual) toast('El archivo se cargó manualmente: vuelve a cargarlo, o usa "Conectar archivo" para auto-actualizar.', 'info'); return; }
+  try {
+    if (s.type === 'handle') {
+      const f = await s.handle.getFile(), sig = f.lastModified + ':' + f.size;
+      if (sig !== s.sig || manual) await ingestBuffers([{ buf: await f.arrayBuffer(), name: f.name }], { type: 'handle', name: f.name, handle: s.handle, sig });
+    } else if (s.type === 'url') {
+      const res = await fetch(bust(s.url), { cache: 'no-store' }); if (!res.ok) throw new Error('HTTP ' + res.status);
+      const buf = await res.arrayBuffer(), sig = buf.byteLength + ':' + hashBuf(buf);
+      if (sig !== s.sig || manual) await ingestBuffers([{ buf, name: s.name }], { type: 'url', url: s.url, name: s.name, sig });
+    }
+    updateChrome();
+  } catch (err) { console.warn(err); if (manual) toast('No se pudo actualizar: ' + err.message, 'bad'); }
+}
+let timer = null;
+function stopTimer() { clearInterval(timer); timer = null; updateChrome(); }
+function startTimer() {
+  clearInterval(timer); timer = null;
+  const sec = +S.cfg.refreshSec;
+  if (sec > 0 && S.source.type && S.source.type !== 'file' && S.source.type !== 'firebase') timer = setInterval(() => { if (!document.hidden) pollSource(false); }, sec * 1000);
+  updateChrome();
+}
+async function tryAutoLoad() {
+  for (const name of DEFAULT_FILES) {
+    try {
+      const url = encodeURI(name), res = await fetch(bust(url), { cache: 'no-store' });
+      if (!res.ok || /text\/html/i.test(res.headers.get('content-type') || '')) continue;
+      const buf = await res.arrayBuffer(); if (buf.byteLength < 500) continue;
+      const ok = await ingestBuffers([{ buf, name }], { type: 'url', url, name, sig: buf.byteLength + ':' + hashBuf(buf) });
+      if (ok) { startTimer(); return true; }
+    } catch (e) { /* sin archivo publicado: se usa carga manual */ }
+  }
+  return false;
+}
+
+/* ------- Exportación ------- */
+function exportAtt(rows) {
+  if (typeof XLSX === 'undefined') { toast('SheetJS no está disponible (revisa tu conexión).', 'bad'); return; }
+  const g = x => x ? (x.valid ? (x.st === 'out' ? 'Fuera de rango' : 'OK') : 'Sin ubicación') : '';
+  const data = rows.map(r => ({
+    Fecha: r.dateKey, Trabajador: empName(r.email), Email: r.email, Sitio: r.course,
+    Entrada: hm(r.entrySec), 'Ubicación entrada': g(r.geo.entry), Salida: r.hasExit ? hm(r.exitSec) : '', 'Ubicación salida': g(r.geo.exit),
+    'Horas ordinarias': r.ordEff, 'Horas extras': r.extEff, 'Horas totales': r.totEff, Estado: r.estado,
+    Incidencias: r.flags.filter(f => f.lvl !== 'info').map(f => f.txt).join('; ')
+  }));
+  const ws = XLSX.utils.json_to_sheet(data), wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'VALIDACION'); XLSX.writeFile(wb, 'VALIDACION_ASISTENCIA_' + TODAY() + '.xlsx');
+}
+
+/* ------- Firebase (sincronización en tiempo real) ------- */
+function fbConfig() {
+  if (FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.databaseURL) return FIREBASE_CONFIG;
+  const c = loadLS(LS.fb, null);
+  return (c && c.apiKey && c.databaseURL) ? c : null;
+}
+const toArr = v => Array.isArray(v) ? v.filter(x => x != null) : (v && typeof v === 'object') ? Object.keys(v).sort((a, b) => a - b).map(k => v[k]) : [];
+function fbUnlisten() { const f = S.fb; if (f.ref) { try { f.ref.off(); } catch (e) { /* noop */ } f.ref = null; } }
+function fbInit() {
+  const f = S.fb, cfg = fbConfig();
+  if (!cfg) { f.status = 'off'; return; }
+  if (typeof firebase === 'undefined') { f.status = 'error'; f.msg = 'No se pudo cargar Firebase (revisa tu conexión a Internet).'; return; }
+  try {
+    if (!firebase.apps.length) firebase.initializeApp(cfg);
+    f.db = firebase.database(); f.auth = firebase.auth();
+  } catch (e) { f.status = 'error'; f.msg = e.message; return; }
+  f.status = 'connecting';
+  f.auth.onAuthStateChanged(user => {
+    f.user = user;
+    if (user || !FIREBASE_REQUIRE_LOGIN) { fbListen(); }
+    else { fbUnlisten(); f.status = 'login'; openLogin(); }
+    updateChrome(); if (S.view === 'registro') renderView();
+  });
+}
+function fbListen() {
+  const f = S.fb; fbUnlisten(); f.status = 'connecting';
+  f.ref = f.db.ref(FIREBASE_PATH);
+  f.ref.on('value', snap => {
+    const v = snap.val(); f.status = 'ready'; f.msg = '';
+    if (!v || !v.general) { f.empty = true; f.meta = null; updateChrome(); if (S.view === 'registro') renderView(); return; }
+    f.empty = false; f.meta = v.meta || null;
+    const upd = (v.meta && v.meta.updated) || 0;
+    if (upd && upd === f.applied) { updateChrome(); if (S.view === 'registro') renderView(); return; }
+    f.applied = upd;
+    S.raw = { base: toArr(v.base), general: toArr(v.general), rastreo: toArr(v.rastreo), epp: [] };
+    S.source = Object.assign({}, S.source, { type: 'firebase', name: 'Firebase · tiempo real', handle: null, url: '', sig: '', at: new Date() });
+    clearInterval(timer); timer = null;
+    rebuild(); persistRaw(); renderView();
+    if (f.notified) toast('Datos actualizados en tiempo real desde Firebase.', 'info');
+    f.notified = true;
+  }, err => {
+    f.status = 'error';
+    f.msg = err && err.code === 'PERMISSION_DENIED' ? 'Permiso denegado: inicia sesión o revisa las reglas de tu base de datos.' : (err && err.message) || 'Error de Firebase';
+    updateChrome(); toast(f.msg, 'bad'); if (S.view === 'registro') renderView();
+  });
+}
+async function fbPublish(silent) {
+  const f = S.fb;
+  if (!f.db) { toast('Firebase no está configurado (Configuración → Firebase).', 'bad'); return false; }
+  if (!f.user) { openLogin(); return false; }
+  if (!S.raw || !S.raw.general || !S.raw.general.length) { toast('Primero carga tu Excel.', 'info'); return false; }
+  const clean = a => JSON.parse(JSON.stringify(a || []));
+  const updated = Date.now();
+  const payload = { base: clean(S.raw.base), general: clean(S.raw.general), rastreo: clean(S.raw.rastreo),
+    meta: { updated, by: f.user.email || '', counts: { base: (S.raw.base || []).length, general: (S.raw.general || []).length, rastreo: (S.raw.rastreo || []).length } } };
+  try {
+    f.applied = updated; await f.db.ref(FIREBASE_PATH).set(payload);
+    if (!silent) toast('Datos publicados: todos los usuarios los verán al instante.', 'ok');
+    return true;
+  } catch (e) {
+    f.applied = 0;
+    toast(e && e.code === 'PERMISSION_DENIED' ? 'Tu usuario no tiene permiso para escribir. Revisa las reglas de Firebase.' : 'No se pudo publicar: ' + (e && e.message), 'bad');
+    return false;
+  }
+}
+function openLogin(msg) {
+  $('#modal-root').innerHTML = '<div class="fixed inset-0 z-50 grid place-items-center overflow-auto bg-black/80 p-4"><div class="fade-in w-full max-w-sm rounded-2xl border border-slate-700 bg-ink-900 p-6 shadow-2xl"><div class="mx-auto grid h-12 w-12 place-items-center rounded-xl bg-sky-500/10 text-sky-300">' + ico('cloud', 'h-6 w-6') + '</div><h3 class="mt-4 text-center text-lg font-semibold text-white">Acceso a GEA Guatemala</h3><p class="mt-1 text-center text-sm text-slate-400">Inicia sesión para ver los datos sincronizados.</p><div class="mt-5 space-y-3"><input id="fb-email" type="email" autocomplete="username" placeholder="Correo" class="w-full ' + INPC + '"><input id="fb-pass" type="password" autocomplete="current-password" placeholder="Contraseña" class="w-full ' + INPC + '"><p id="fb-err" class="min-h-[1rem] text-xs text-rose-300">' + esc(msg || '') + '</p><button data-act="fb-login" class="' + BTNP + ' w-full justify-center">Entrar</button><button data-act="close-modal" class="w-full text-center text-xs text-slate-500 hover:text-slate-300">Continuar en modo local (sin sincronizar)</button></div></div></div>';
+  const el = $('#fb-email'); if (el && el.focus) el.focus();
+}
+async function fbLogin() {
+  const f = S.fb, email = ($('#fb-email') || {}).value, pass = ($('#fb-pass') || {}).value, err = $('#fb-err');
+  if (!f.auth) return;
+  if (!email || !pass) { if (err) err.textContent = 'Escribe tu correo y contraseña.'; return; }
+  try { await f.auth.signInWithEmailAndPassword(email.trim(), pass); closeModal(); toast('Sesión iniciada.', 'ok'); }
+  catch (e) {
+    const m = { 'auth/invalid-credential': 'Correo o contraseña incorrectos.', 'auth/wrong-password': 'Correo o contraseña incorrectos.', 'auth/user-not-found': 'Correo o contraseña incorrectos.', 'auth/invalid-email': 'Correo no válido.', 'auth/too-many-requests': 'Demasiados intentos. Espera unos minutos.', 'auth/operation-not-allowed': 'Activa “Correo/contraseña” en Authentication de Firebase.' };
+    if (err) err.textContent = m[e && e.code] || ('No se pudo iniciar sesión: ' + (e && e.message));
+  }
+}
+async function fbLogout() { if (S.fb.auth) { await S.fb.auth.signOut(); toast('Sesión cerrada.', 'info'); } }
+
+/* ------- Gráficas y mapas ------- */
+function mkChart(id, conf) {
+  const el = document.getElementById(id); if (!el || typeof Chart === 'undefined') return;
+  if (S.charts[id]) S.charts[id].destroy(); S.charts[id] = new Chart(el, conf);
+}
+function killCharts() { Object.keys(S.charts).forEach(k => { try { S.charts[k].destroy(); } catch (e) { /* noop */ } }); S.charts = {}; }
+function killMaps() { Object.keys(S.maps).forEach(k => { try { S.maps[k].remove(); } catch (e) { /* noop */ } }); S.maps = {}; }
+function addBaseMap(map) {
+  let sourceIndex = 0;
+  const isCurrentMap = () => Object.keys(S.maps).some(k => S.maps[k] === map) && map.getContainer().isConnected;
+  const useNextSource = () => {
+    if (!isCurrentMap()) return;
+    const source = TILE_SOURCES[sourceIndex++];
+    if (!source) return;
+    const layer = L.tileLayer(source.url, { attribution: source.attribution, maxZoom: 19, subdomains: 'abc' });
+    layer.once('tileerror', () => {
+      if (!isCurrentMap()) return;
+      if (sourceIndex < TILE_SOURCES.length) {
+        map.removeLayer(layer);
+        useNextSource();
+      }
+    });
+    layer.addTo(map);
+  };
+  useNextSource();
+}
+
+window.GEA = { Core, S, esc, $, $$, TODAY, DEFAULT_FILES, TILE_SOURCES, PALETTE, DOW, MON, DEFAULT_CFG, LS, loadLS, saveLS,
+  fmtD, fmtDS, fmtH, fmtPct, hm, BTN, BTNP, INPC, TONE, ico, badge, chip, pctColor, toast, inRange, filterRange, rangeLabel, recsIn, empOf, empName,
+  persistRaw, rebuild, ingestBuffers, loadFromInput, connectFile, pollSource, startTimer, stopTimer, tryAutoLoad,
+  exportAtt, mkChart, killCharts, killMaps };
+
+/* =====================================================================
+   INTERFAZ — parte B: vistas, eventos e inicialización
+   ===================================================================== */
+const card = (inner, cls) => '<div class="rounded-2xl border border-slate-800/80 bg-slate-900/50 ' + (cls || '') + '">' + inner + '</div>';
+const cardHead = (title, sub, right) => '<div class="flex items-start justify-between gap-3 px-5 pt-4"><div><h3 class="text-sm font-semibold text-slate-100">' + title + '</h3>' + (sub ? '<p class="mt-0.5 text-xs text-slate-500">' + sub + '</p>' : '') + '</div>' + (right || '') + '</div>';
+const pageHead = (t, sub, right) => '<div class="flex flex-wrap items-end justify-between gap-3"><div><h2 class="text-xl font-semibold text-white">' + t + '</h2><p class="text-sm text-slate-500">' + sub + '</p></div><div class="flex gap-2">' + (right || '') + '</div></div>';
+const TH = 'px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400';
+const TD = 'px-3 py-2.5 align-top';
+function kpi(o) {
+  const tones = { emerald: 'bg-emerald-500/10 text-emerald-300', rose: 'bg-rose-500/10 text-rose-300', sky: 'bg-sky-500/10 text-sky-300', amber: 'bg-amber-500/10 text-amber-300', violet: 'bg-violet-500/10 text-violet-300' };
+  return '<div class="rounded-2xl border border-slate-800/80 bg-slate-900/50 p-4 sm:p-5"><div class="flex items-center justify-between"><p class="text-xs font-medium uppercase tracking-wide text-slate-400">' + o.label + '</p><span class="grid h-9 w-9 place-items-center rounded-xl ' + tones[o.tone || 'sky'] + '">' + ico(o.icon, 'h-5 w-5') + '</span></div><p class="mt-3 text-3xl font-semibold tracking-tight text-white">' + o.value + '</p><p class="mt-1 text-xs text-slate-500">' + (o.sub || '') + '</p></div>';
+}
+const sel = (opts, cur, attrs) => '<select ' + attrs + ' class="' + INPC + '">' + opts.map(o => '<option value="' + esc(o[0]) + '"' + (String(o[0]) === String(cur) ? ' selected' : '') + '>' + esc(o[1]) + '</option>').join('') + '</select>';
+const courseOpts = () => [['', 'Todos los sitios']].concat(S.model ? S.model.courses.map(c => [c, c]) : []);
+const noMap = m => '<div class="grid h-full min-h-[10rem] place-items-center p-4 text-center text-sm text-slate-500">' + (m || 'Mapa no disponible (sin conexión a Leaflet). Consulta la tabla de coordenadas.') + '</div>';
+
+function flagChips(r, max) {
+  const fl = r.flags.filter(f => f.lvl !== 'info'); if (!fl.length) return badge('Sin incidencias', 'ok');
+  const tone = { danger: 'bad', warn: 'warn' };
+  return fl.slice(0, max || 3).map(f => '<span title="' + esc(f.detail) + '">' + badge(esc(f.txt), tone[f.lvl]) + '</span>').join(' ') + (fl.length > (max || 3) ? ' ' + badge('+' + (fl.length - (max || 3)), 'mute') : '');
+}
+function geoBadge(g) {
+  if (!g) return '<span class="text-slate-600">—</span>';
+  const link = g.valid ? ' <a class="text-sky-400 hover:text-sky-300" target="_blank" rel="noopener" title="Abrir en Google Maps" href="https://www.google.com/maps?q=' + g.lat + ',' + g.lng + '">' + ico('pin', 'inline h-3.5 w-3.5') + '</a>' : '';
+  if (g.st === 'none') return badge(ico('alert', 'h-3 w-3') + 'Sin ubicación', 'bad');
+  if (g.st === 'out') return badge('Fuera de rango · ' + Core.fmtDist(g.dist), 'warn') + link;
+  return badge(ico('check', 'h-3 w-3') + 'OK' + (g.dist != null ? ' · ' + Core.fmtDist(g.dist) : ''), 'ok') + link;
+}
+const estadoBadge = r => {
+  if (r.estado.indexOf('EXTRA') >= 0) return badge('Extra completado', 'info');
+  if (r.pending) return badge(r.dateKey < TODAY() ? 'Pendiente (sin cierre)' : 'En jornada', r.dateKey < TODAY() ? 'bad' : 'warn');
+  return badge('Completado', 'ok');
+};
+const emptyState = () => '<div class="mx-auto max-w-2xl"><div class="rounded-3xl border border-dashed border-slate-700 bg-slate-900/40 p-10 text-center"><div class="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-sky-500/10 text-sky-300">' + ico('upload', 'h-7 w-7') + '</div><h2 class="mt-5 text-xl font-semibold text-white">Carga tu archivo de Excel</h2><p class="mt-2 text-sm text-slate-400">Arrastra aquí el libro (o un CSV) o usa el botón. Se esperan las hojas <b>BASE DE DATOS</b>, <b>DATOS GENERAL</b> y <b>RASTREO DIARIO</b>. Todo se procesa en tu navegador; ningún dato se sube a un servidor.</p><div class="mt-6 flex flex-wrap justify-center gap-3"><button data-act="load" class="' + BTNP + '">' + ico('upload', 'h-4 w-4') + ' Cargar Excel / CSV</button>' + (window.showOpenFilePicker ? '<button data-act="connect" class="' + BTN + '">' + ico('plug', 'h-4 w-4') + ' Conectar archivo (auto-actualiza)</button>' : '') + '</div></div></div>';
+
+/* ---------------- Dashboard ---------------- */
+function dashData() {
+  const M = S.model, range = filterRange(), course = S.filter.course, T = TODAY();
+  const recs = recsIn(range, course), D = { range, course, recs };
+  const sum = (a, f) => a.reduce((s, x) => s + (f(x) || 0), 0);
+  const cnt = (r, code) => r.flags.filter(f => f.code === code).length;
+  D.people = new Set(recs.map(r => r.email)).size; D.days = new Set(recs.map(r => r.dateKey)).size;
+  D.ord = sum(recs, r => r.ordEff); D.ext = sum(recs, r => r.extEff);
+  D.incTotal = sum(recs, r => r.inc); D.incRecs = recs.filter(r => r.inc > 0).length; D.incPeople = new Set(recs.filter(r => r.inc > 0).map(r => r.email)).size;
+  D.noLoc = sum(recs, r => cnt(r, 'SIN_UBIC')); D.outR = sum(recs, r => cnt(r, 'FUERA_RANGO'));
+  D.closed = recs.filter(r => !r.pending).length; D.pend = recs.length - D.closed;
+  const tp = {}; recs.forEach(r => r.flags.forEach(f => { if (f.lvl !== 'info') tp[f.code] = (tp[f.code] || 0) + 1; })); D.byTipo = tp;
+  const emps = M.employees.filter(e => !course || e.course === course), tm = new Map();
+  M.records.filter(r => r.dateKey === T).forEach(r => tm.set(r.email, r));
+  D.todayRows = emps.map(e => ({ e, r: tm.get(e.email) || null }));
+  D.present = D.todayRows.filter(x => x.r).length; D.inJ = D.todayRows.filter(x => x.r && x.r.pending).length; D.totalEmps = emps.length;
+  const by = new Map();
+  recs.forEach(r => {
+    let w = by.get(r.email); if (!w) { w = { email: r.email, days: new Set(), h: 0, ex: 0, danger: 0, warn: 0 }; by.set(r.email, w); }
+    w.days.add(r.dateKey); w.h += r.totEff; w.ex += r.extEff; w.danger += r.flags.filter(f => f.lvl === 'danger').length; w.warn += r.flags.filter(f => f.lvl === 'warn').length;
+  });
+  D.workers = Array.from(by.values()).map(w => ({ email: w.email, days: w.days.size, h: w.h, ex: w.ex, danger: w.danger, warn: w.warn })).sort((a, b) => b.days - a.days || b.h - a.h);
+  const dset = Array.from(new Set(recs.map(r => r.dateKey))).sort(); let labels = dset;
+  if (dset.length > 1) { const span = Core.keyNum(dset[dset.length - 1]) - Core.keyNum(dset[0]) + 1; if (span <= 62) labels = Core.daysBetween(dset[0], dset[dset.length - 1]); }
+  D.labels = labels;
+  D.sN = labels.map(d => recs.filter(r => r.dateKey === d).length);
+  D.sP = labels.map(d => new Set(recs.filter(r => r.dateKey === d).map(r => r.email)).size);
+  D.sO = labels.map(d => Core.round2(sum(recs.filter(r => r.dateKey === d), r => r.ordEff)));
+  D.sE = labels.map(d => Core.round2(sum(recs.filter(r => r.dateKey === d), r => r.extEff)));
+  const cc = {}; recs.forEach(r => { const c = r.course || '(sin sitio)'; cc[c] = (cc[c] || 0) + 1; }); D.byCourse = cc;
+  const ec = {}; recs.forEach(r => { ec[r.estado] = (ec[r.estado] || 0) + 1; }); D.byEstado = ec;
+  return D;
+}
+function viewDashboard() {
+  if (!S.model) return emptyState();
+  const D = dashData(); S._dash = D; const f = S.filter;
+  const presets = [['today', 'Hoy'], ['week', 'Esta semana'], ['month', 'Mes'], ['range', 'Rango personalizado'], ['all', 'Todo']];
+  const filters = '<div class="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-800/80 bg-slate-900/50 p-3">' +
+    '<div class="flex flex-wrap gap-1.5">' + presets.map(p => chip(p[1], f.mode === p[0], 'data-act="preset" data-v="' + p[0] + '"')).join('') + '</div>' +
+    (f.mode === 'range' ? '<div class="flex items-center gap-2 text-xs text-slate-400"><input type="date" data-chg="dash-from" value="' + esc(f.from) + '" class="' + INPC + '"> a <input type="date" data-chg="dash-to" value="' + esc(f.to) + '" class="' + INPC + '"></div>' : '') +
+    '<div class="ml-auto">' + sel(courseOpts(), f.course, 'data-chg="dash-course"') + '</div></div>';
+  const kpis = '<div class="grid grid-cols-2 gap-4 lg:grid-cols-3 2xl:grid-cols-6">' +
+    kpi({ label: 'Total asistencias', value: D.recs.length, sub: D.people + ' personas · ' + D.days + ' días', icon: 'clip', tone: 'sky' }) +
+    kpi({ label: 'Jornadas cerradas', value: fmtPct(D.recs.length ? D.closed / D.recs.length : null), sub: D.pend + ' pendientes de salida', icon: 'check', tone: D.pend ? 'amber' : 'emerald' }) +
+    kpi({ label: 'Presentes hoy', value: D.present + '/' + D.totalEmps, sub: D.inJ + ' en jornada · ' + (D.present - D.inJ) + ' cerradas', icon: 'users', tone: D.present ? 'emerald' : 'rose' }) +
+    kpi({ label: 'Incidencias', value: D.incTotal, sub: D.incPeople + ' trabajadores · ' + D.incRecs + ' jornadas', icon: 'alert', tone: D.incTotal ? 'rose' : 'emerald' }) +
+    kpi({ label: 'Horas trabajadas', value: fmtH(D.ord + D.ext), sub: 'Ordinarias ' + fmtH(D.ord) + ' · Extra ' + fmtH(D.ext), icon: 'clock', tone: 'violet' }) +
+    kpi({ label: 'Marcas sin ubicación', value: D.noLoc, sub: D.outR + ' fuera de rango', icon: 'pin', tone: D.noLoc ? 'amber' : 'emerald' }) + '</div>';
+  const cv = (id, h) => '<div class="relative px-4 pb-4 pt-2" style="height:' + (h || 280) + 'px"><canvas id="' + id + '"></canvas></div>';
+  const todayList = D.todayRows.length ? D.todayRows.map(x => '<button data-act="open-hist" data-email="' + esc(x.e.email) + '" class="flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left hover:bg-slate-800/50"><span class="grid h-9 w-9 place-items-center rounded-full text-xs font-semibold ' + (x.r ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300') + '">' + esc(x.e.initials) + '</span><span class="min-w-0 flex-1"><span class="block truncate text-sm text-slate-200">' + esc(x.e.name) + '</span><span class="block text-xs text-slate-500">' + esc(x.e.course || '—') + (x.r ? ' · entrada ' + hm(x.r.entrySec) : '') + '</span></span>' + (x.r ? (x.r.pending ? badge('En jornada', 'ok') : badge('Cerrada', 'info')) : badge('Sin marcación', 'bad')) + '</button>').join('') : '<p class="p-4 text-sm text-slate-500">Sin empleados.</p>';
+  const wrows = D.workers.map(w => { const e = empOf(w.email); return '<tr class="cursor-pointer border-t border-slate-800/70 hover:bg-slate-800/30" data-act="open-hist" data-email="' + esc(w.email) + '"><td class="' + TD + '"><p class="font-medium text-slate-200">' + esc(e ? e.name : w.email) + '</p><p class="text-xs text-slate-500">' + esc(e ? e.puesto : '') + '</p></td><td class="' + TD + '">' + esc(e ? e.course : '') + '</td><td class="' + TD + '">' + w.days + '</td><td class="' + TD + '">' + fmtH(w.h) + '</td><td class="' + TD + '">' + fmtH(w.ex) + '</td><td class="' + TD + '">' + (w.danger ? badge(w.danger + ' críticas', 'bad') + ' ' : '') + (w.warn ? badge(w.warn + ' avisos', 'warn') : '') + (!w.danger && !w.warn ? badge('Ninguna', 'ok') : '') + '</td></tr>'; }).join('');
+  const incs = D.recs.filter(r => r.inc > 0).sort((a, b) => b.entryTs - a.entryTs).slice(0, 8).map(r => '<button data-act="open-hist" data-email="' + esc(r.email) + '" class="block w-full rounded-xl px-2 py-2 text-left hover:bg-slate-800/50"><div class="flex items-center justify-between"><span class="text-sm text-slate-200">' + esc(empName(r.email)) + '</span><span class="text-xs text-slate-500">' + fmtDS(r.dateKey) + '</span></div><div class="mt-1 flex flex-wrap gap-1">' + flagChips(r, 3) + '</div></button>').join('');
+  return '<div class="space-y-5">' + pageHead('Dashboard General', rangeLabel() + (D.course ? ' · ' + esc(D.course) : ''), '') + filters +
+    (D.recs.length ? '' : '<div class="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">No hay jornadas en el periodo seleccionado. Prueba con “Mes” o “Todo”.</div>') + kpis +
+    '<div class="grid gap-4 xl:grid-cols-3">' +
+    card(cardHead('Tendencia de asistencia', 'Registros y personal único por día') + cv('ch-trend'), 'xl:col-span-2') +
+    card(cardHead('Estado de las jornadas', D.closed + ' cerradas · ' + D.pend + ' pendientes') + cv('ch-estado')) +
+    card(cardHead('Horas por día', 'Ordinarias y extras (horas negativas corregidas)') + cv('ch-hours'), 'xl:col-span-2') +
+    card(cardHead('Distribución por sitio / curso', 'Jornadas registradas') + cv('ch-site')) +
+    card(cardHead('Incidencias por trabajador', 'Críticas y avisos de marcación') + cv('ch-inc'), 'xl:col-span-2') +
+    card(cardHead('Tipos de incidencia', 'Distribución en el periodo') + cv('ch-tipos')) +
+    card(cardHead('Estado del personal hoy', fmtD(TODAY()) + ' · verde = presente, rojo = sin marcación') + '<div class="max-h-96 space-y-0.5 overflow-auto px-3 pb-4 pt-2">' + todayList + '</div>') +
+    card(cardHead('Resumen por trabajador', 'Haz clic para ver el historial') + '<div class="max-h-96 overflow-auto px-2 pb-4 pt-2"><table class="tbl w-full text-sm"><thead><tr><th class="' + TH + '">Trabajador</th><th class="' + TH + '">Sitio</th><th class="' + TH + '">Días</th><th class="' + TH + '">Horas</th><th class="' + TH + '">Extras</th><th class="' + TH + '">Incidencias</th></tr></thead><tbody>' + (wrows || '<tr><td colspan="6" class="p-4 text-slate-500">Sin datos en el periodo.</td></tr>') + '</tbody></table></div>', 'xl:col-span-2') +
+    card(cardHead('Últimas incidencias', 'Más recientes del periodo') + '<div class="max-h-96 space-y-0.5 overflow-auto px-3 pb-4 pt-2">' + (incs || '<p class="p-4 text-sm text-slate-500">Sin incidencias.</p>') + '</div>') +
+    card(cardHead('Última posición conocida (GPS)', 'Último punto del rastreo de cada trabajador') + '<div class="p-4"><div id="map-dash" class="h-80 overflow-hidden rounded-xl"></div></div>', 'xl:col-span-2') +
+    '</div></div>';
+}
+function chartDefaults() {
+  if (typeof Chart === 'undefined') return;
+  Chart.defaults.color = '#94a3b8'; Chart.defaults.borderColor = 'rgba(148,163,184,.12)'; Chart.defaults.font.family = 'Inter, system-ui, sans-serif';
+}
+function afterDashboard() {
+  const D = S._dash; if (!D) return; chartDefaults();
+  const lbl = D.labels.map(fmtDS), base = { responsive: true, maintainAspectRatio: false };
+  const leg = { legend: { position: 'bottom', labels: { boxWidth: 10, usePointStyle: true } } };
+  mkChart('ch-trend', { type: 'bar', data: { labels: lbl, datasets: [{ type: 'bar', label: 'Registros', data: D.sN, backgroundColor: 'rgba(56,189,248,.55)', borderRadius: 6 }, { type: 'line', label: 'Personal único', data: D.sP, borderColor: '#34d399', backgroundColor: '#34d399', tension: .3, pointRadius: 3 }] }, options: Object.assign({}, base, { plugins: leg, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }) });
+  mkChart('ch-hours', { type: 'bar', data: { labels: lbl, datasets: [{ label: 'Ordinarias', data: D.sO, backgroundColor: '#38bdf8', borderRadius: 4 }, { label: 'Extras', data: D.sE, backgroundColor: '#a78bfa', borderRadius: 4 }] }, options: Object.assign({}, base, { plugins: leg, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } }) });
+  const cn = Object.keys(D.byCourse);
+  mkChart('ch-site', { type: 'doughnut', data: { labels: cn, datasets: [{ data: cn.map(c => D.byCourse[c]), backgroundColor: PALETTE, borderWidth: 0 }] }, options: Object.assign({}, base, { cutout: '58%', plugins: leg }) });
+  const top = D.workers.filter(w => w.danger + w.warn > 0).sort((a, b) => (b.danger + b.warn) - (a.danger + a.warn)).slice(0, 8);
+  mkChart('ch-inc', { type: 'bar', data: { labels: top.map(w => empName(w.email)), datasets: [{ label: 'Críticas', data: top.map(w => w.danger), backgroundColor: '#fb7185', borderRadius: 4 }, { label: 'Avisos', data: top.map(w => w.warn), backgroundColor: '#fbbf24', borderRadius: 4 }] }, options: Object.assign({}, base, { indexAxis: 'y', plugins: leg, scales: { x: { stacked: true, beginAtZero: true, ticks: { precision: 0 } }, y: { stacked: true } } }) });
+  const en = Object.keys(D.byEstado), ecol = { 'COMPLETADO': '#34d399', 'EXTRA COMPLETADO': '#38bdf8', 'PENDIENTE': '#fbbf24' };
+  mkChart('ch-estado', { type: 'pie', data: { labels: en, datasets: [{ data: en.map(k => D.byEstado[k]), backgroundColor: en.map((k, i) => ecol[k] || PALETTE[i % 8]), borderWidth: 0 }] }, options: Object.assign({}, base, { plugins: leg }) });
+  const TL = { SIN_UBIC: 'Sin ubicación', FUERA_RANGO: 'Fuera de rango', SIN_SALIDA: 'Salida no marcada', HORAS_NEG: 'Horas negativas', JORNADA_LARGA: 'Jornada excesiva', EXTRA_LARGA: 'Extra excesiva', SALIDA_ANTES: 'Salida antes de entrada' }, tk = Object.keys(D.byTipo);
+  mkChart('ch-tipos', { type: 'doughnut', data: { labels: tk.map(k => TL[k] || k), datasets: [{ data: tk.map(k => D.byTipo[k]), backgroundColor: PALETTE, borderWidth: 0 }] }, options: Object.assign({}, base, { cutout: '58%', plugins: leg }) });
+  dashMap();
+}
+function dashMap() {
+  const el = $('#map-dash'); if (!el) return;
+  const M = S.model, pts = M.employees.filter(e => (!S.filter.course || e.course === S.filter.course) && M.lastPoint[e.email]).map(e => ({ e, p: M.lastPoint[e.email] }));
+  if (!pts.length) { el.innerHTML = noMap('Sin puntos GPS para mostrar.'); return; }
+  if (typeof L === 'undefined') { el.innerHTML = noMap(); return; }
+  const map = L.map(el); S.maps.dash = map; addBaseMap(map);
+  const b = [];
+  pts.forEach((x, i) => { const ll = [x.p.lat, x.p.lng]; b.push(ll); L.circleMarker(ll, { radius: 9, color: '#0b1220', weight: 2, fillColor: PALETTE[i % 8], fillOpacity: 1 }).addTo(map); });
+  map.fitBounds(b, { padding: [40, 40], maxZoom: 16 });
+}
+
+/* ---------------- Registro y actualización ---------------- */
+function fbPanel() {
+  const f = S.fb, m = f.meta;
+  if (f.status === 'off') {
+    return card('<div class="flex items-start gap-3 p-5"><span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-amber-500/10 text-amber-300">' + ico('cloud', 'h-5 w-5') + '</span><div class="flex-1"><p class="font-semibold text-white">Firebase no está configurado</p><p class="mt-1 text-sm text-slate-400">Conecta tu proyecto para que todos los usuarios vean los mismos datos. Cuando publiques un Excel nuevo, el cambio aparece al instante en todos los navegadores, sin recargar.</p><button data-act="settings" class="' + BTNP + ' mt-3">' + ico('cog', 'h-4 w-4') + ' Configurar Firebase</button></div></div>');
+  }
+  const dot = f.status === 'ready' ? 'bg-emerald-400' : f.status === 'error' ? 'bg-rose-400' : 'bg-amber-400';
+  const label = { ready: 'Conectado en tiempo real', connecting: 'Conectando…', login: 'Inicia sesión para ver los datos', error: 'Error de conexión' }[f.status] || f.status;
+  return card('<div class="flex flex-wrap items-center gap-4 p-5"><span class="grid h-10 w-10 place-items-center rounded-xl bg-sky-500/10 text-sky-300">' + ico('cloud', 'h-5 w-5') + '</span><div class="min-w-0 flex-1"><p class="flex items-center gap-2 font-semibold text-white"><span class="h-2 w-2 rounded-full ' + dot + '"></span>' + label + '</p><p class="text-xs text-slate-500">' + (f.user ? 'Sesión: ' + esc(f.user.email || '') : 'Sin sesión iniciada') + (m && m.updated ? ' · Última publicación: ' + esc(new Date(m.updated).toLocaleString('es-GT')) + (m.by ? ' por ' + esc(m.by) : '') : '') + '</p>' + (f.status === 'error' && f.msg ? '<p class="mt-1 text-xs text-rose-300">' + esc(f.msg) + '</p>' : '') + (f.empty ? '<p class="mt-1 text-xs text-amber-300">La base de datos está vacía: carga tu Excel y pulsa “Publicar datos”.</p>' : '') + '</div><div class="flex flex-wrap gap-2">' + (f.user ? '<button data-act="fb-publish" class="' + BTNP + '">' + ico('cloud', 'h-4 w-4') + ' Publicar datos</button><button data-act="fb-logout" class="' + BTN + '">Cerrar sesión</button>' : '<button data-act="fb-open-login" class="' + BTNP + '">Iniciar sesión</button>') + '</div></div><div class="border-t border-slate-800/70 px-5 py-3 text-xs text-slate-500"><b class="text-slate-400">Para actualizar los datos de todos:</b> 1) carga tu Excel con “Cargar Excel” · 2) revisa el dashboard · 3) pulsa “Publicar datos”. Los demás usuarios verán el cambio de inmediato.</div>');
+}
+function regEmployees() {
+  const r = S.reg, q = r.q.toLowerCase();
+  return S.model.employees.filter(x => (!r.course || x.course === r.course) && (!q || (x.name + ' ' + x.email + ' ' + x.course + ' ' + x.puesto).toLowerCase().indexOf(q) >= 0));
+}
+function regCard(e) {
+  const M = S.model, T = TODAY(), mine = M.records.filter(r => r.email === e.email), rec = mine.find(r => r.dateKey === T), lp = M.lastPoint[e.email];
+  const inc = mine.reduce((s, r) => s + r.inc, 0), hrs = mine.reduce((s, r) => s + r.totEff, 0);
+  const today = rec ? (rec.pending ? badge('En jornada · entrada ' + hm(rec.entrySec), 'ok') : badge('Jornada cerrada', 'info')) : badge('Sin marcación hoy', 'bad');
+  return '<div class="rounded-2xl border border-slate-800/80 bg-slate-900/50 p-5"><div class="flex items-start gap-3"><span class="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-sky-500/15 text-sm font-semibold text-sky-300">' + esc(e.initials) + '</span><div class="min-w-0 flex-1"><p class="truncate font-semibold text-white">' + esc(e.name) + '</p><p class="truncate text-xs text-slate-500">' + esc(e.puesto || 'Sin puesto') + '</p><div class="mt-2 flex flex-wrap gap-1.5">' + (e.course ? badge(esc(e.course), 'info') : '') + today + (e.inBase ? '' : badge('No está en BASE DE DATOS', 'warn')) + '</div></div></div>' +
+    '<dl class="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-500"><div class="col-span-2 truncate">Correo: <span class="text-slate-300">' + esc(e.email || '—') + '</span></div><div>Cel: <span class="text-slate-300">' + esc(e.cell || '—') + '</span></div><div class="truncate">Seguro: <span class="text-slate-300">' + esc(e.seguro || '—') + '</span></div><div class="col-span-2 truncate">Dirección: <span class="text-slate-300">' + esc(e.direccion || '—') + '</span></div></dl>' +
+    '<div class="mt-4 grid grid-cols-3 gap-3 text-center"><div class="rounded-xl bg-slate-800/50 py-2"><p class="text-lg font-semibold text-white">' + mine.length + '</p><p class="text-[11px] text-slate-500">Jornadas</p></div><div class="rounded-xl bg-slate-800/50 py-2"><p class="text-lg font-semibold text-white">' + fmtH(hrs) + '</p><p class="text-[11px] text-slate-500">Horas</p></div><div class="rounded-xl bg-slate-800/50 py-2"><p class="text-lg font-semibold ' + (inc ? 'text-rose-300' : 'text-emerald-300') + '">' + inc + '</p><p class="text-[11px] text-slate-500">Incidencias</p></div></div>' +
+    '<div class="mt-3 flex items-center justify-between text-xs text-slate-500"><span>' + (lp ? 'Último GPS: ' + fmtDS(lp.dateKey) + ' ' + hm(lp.sec) : 'Sin rastreo GPS') + '</span><button data-act="open-hist" data-email="' + esc(e.email) + '" class="text-sky-400 hover:underline">Ver historial →</button></div></div>';
+}
+const regList = () => { const l = regEmployees(); return l.length ? l.map(regCard).join('') : '<p class="col-span-full rounded-xl border border-slate-800 p-6 text-center text-sm text-slate-500">No hay empleados que coincidan con el filtro.</p>'; };
+function viewReg() {
+  const r = S.reg;
+  return '<div class="space-y-5">' + pageHead('Registro y Actualización', 'Personal activo y sincronización de datos con Firebase', '') + fbPanel() +
+    (S.model ? '<div class="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-800/80 bg-slate-900/50 p-3"><input type="search" data-inp="reg-q" value="' + esc(r.q) + '" placeholder="Buscar empleado…" class="' + INPC + ' w-56">' + sel(courseOpts(), r.course, 'data-chg="reg-course"') + '<span class="ml-auto text-xs text-slate-500">' + S.model.employees.length + ' empleados registrados</span></div><div id="reg-list" class="grid gap-4 xl:grid-cols-2">' + regList() + '</div>' : emptyState()) + '</div>';
+}
+
+/* ---------------- Validación diaria / asistencia ---------------- */
+function attFiltered() {
+  const a = S.att, range = { from: a.from || '0000-00-00', to: a.to || '9999-99-99' }, q = a.q.toLowerCase();
+  return S.model.records.filter(r => inRange(r.dateKey, range) && (!a.course || r.course === a.course) && (!a.estado || r.estado === a.estado) && (!a.onlyInc || r.inc > 0) && (!q || (empName(r.email) + ' ' + r.email + ' ' + r.course).toLowerCase().indexOf(q) >= 0)).sort((x, y) => y.entryTs - x.entryTs);
+}
+function setAttPreset(p) {
+  const t = TODAY(), a = S.att; a.preset = p;
+  if (p === 'today') { a.from = a.to = t; }
+  else if (p === 'yesterday') { a.from = a.to = Core.numKey(Core.keyNum(t) - 1); }
+  else if (p === 'week') { const w = Core.weekRange(t); a.from = w.from; a.to = w.to; }
+  else if (p === 'month') { const m = Core.monthRange(t); a.from = m.from; a.to = m.to; }
+  else { a.from = ''; a.to = ''; }
+}
+function attRow(r) {
+  const e = empOf(r.email), extra = r.hasExtra ? '<div class="mt-0.5 text-xs text-slate-500">Extra ' + hm(r.xinSec) + ' → ' + (r.xoutSec != null ? hm(r.xoutSec) : '…') + '</div>' : '';
+  const exitCell = r.hasExit ? hm(r.exitSec) + (r.exitKey && r.exitKey !== r.dateKey ? ' <span class="text-xs text-slate-500">(' + fmtDS(r.exitKey) + ')</span>' : '') : (r.dateKey < TODAY() ? badge('No marcada', 'bad') : badge('En curso', 'warn'));
+  return '<tr class="cursor-pointer border-t border-slate-800/70 hover:bg-slate-800/30" data-act="open-hist" data-email="' + esc(r.email) + '"><td class="' + TD + ' whitespace-nowrap">' + fmtDS(r.dateKey) + (r.dateFixed ? ' <span title="Fecha corregida: el Excel guardó día y mes invertidos" class="text-sky-400">*</span>' : '') + '</td><td class="' + TD + '"><p class="font-medium text-slate-200">' + esc(e ? e.name : r.email) + '</p><p class="text-xs text-slate-500">' + esc(r.email) + '</p></td><td class="' + TD + '">' + esc(r.course || '—') + '</td><td class="' + TD + ' whitespace-nowrap">' + hm(r.entrySec) + '</td><td class="' + TD + '">' + geoBadge(r.geo.entry) + '</td><td class="' + TD + ' whitespace-nowrap">' + exitCell + '</td><td class="' + TD + '">' + geoBadge(r.geo.exit) + '</td><td class="' + TD + ' whitespace-nowrap">' + (r.negFix && r.ordR != null && r.ordR < 0 ? '<span class="text-rose-300 line-through">' + r.ordR + '</span> ' : '') + fmtH(r.ordEff) + '</td><td class="' + TD + ' whitespace-nowrap">' + fmtH(r.extEff) + extra + '</td><td class="' + TD + ' whitespace-nowrap font-medium text-slate-100">' + fmtH(r.totEff) + '</td><td class="' + TD + '">' + estadoBadge(r) + '</td><td class="' + TD + '"><div class="flex max-w-xs flex-wrap gap-1">' + flagChips(r, 3) + '</div></td></tr>';
+}
+function attBody() {
+  const rows = attFiltered(), a = S.att, M = S.model, cnt = c => rows.reduce((s, r) => s + r.flags.filter(f => f.code === c).length, 0);
+  const sums = '<div class="flex flex-wrap gap-2">' + badge(rows.length + ' registros', 'mute') + badge(rows.filter(r => r.inc).length + ' con incidencias', rows.some(r => r.inc) ? 'bad' : 'ok') + badge(cnt('SIN_UBIC') + ' marcas sin ubicación', cnt('SIN_UBIC') ? 'bad' : 'ok') + badge(cnt('FUERA_RANGO') + ' fuera de rango', cnt('FUERA_RANGO') ? 'warn' : 'ok') + badge(cnt('SIN_SALIDA') + ' sin salida', cnt('SIN_SALIDA') ? 'bad' : 'ok') + '</div>';
+  let absent = '';
+  if (a.from && a.from === a.to && a.from <= TODAY()) {
+    const have = new Set(rows.map(r => r.email)), miss = M.employees.filter(e => e.inBase && (!a.course || e.course === a.course) && !M.records.some(r => r.dateKey === a.from && r.email === e.email));
+    absent = miss.length ? '<div class="rounded-xl border border-rose-500/25 bg-rose-500/5 px-4 py-3 text-sm"><span class="font-medium text-rose-300">Sin marcación el ' + fmtD(a.from) + ':</span> ' + miss.map(e => '<span class="mr-1">' + badge(esc(e.name), 'bad') + '</span>').join('') + '</div>' : '<div class="rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-300">Todo el personal marcó asistencia el ' + fmtD(a.from) + '.</div>';
+    void have;
+  }
+  return sums + absent + '<div class="overflow-auto rounded-2xl border border-slate-800/80 bg-slate-900/50" style="max-height:70vh"><table class="tbl w-full min-w-[1100px] text-sm"><thead><tr>' + ['Fecha', 'Trabajador', 'Sitio', 'Entrada', 'Ubic. entrada', 'Salida', 'Ubic. salida', 'H. ordinarias', 'H. extra', 'Total', 'Estado', 'Incidencias'].map(h => '<th class="' + TH + '">' + h + '</th>').join('') + '</tr></thead><tbody>' + (rows.map(attRow).join('') || '<tr><td colspan="12" class="p-8 text-center text-slate-500">No hay registros con estos filtros.</td></tr>') + '</tbody></table></div><p class="text-xs text-slate-500"><span class="text-sky-400">*</span> Fecha corregida automáticamente (el Excel guardó día y mes invertidos). Las horas negativas se recalculan considerando el cruce de medianoche.</p>';
+}
+function viewAtt() {
+  if (!S.model) return emptyState(); const a = S.att;
+  const estados = [['', 'Todos los estados']].concat(Array.from(new Set(S.model.records.map(r => r.estado))).sort().map(x => [x, x]));
+  return '<div class="space-y-5">' + pageHead('Validación Diaria / Asistencia', 'Entradas, salidas y validación de geolocalización', '<button data-act="export-att" class="' + BTN + '">' + ico('download', 'h-4 w-4') + ' Exportar Excel</button>') +
+    '<div class="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-800/80 bg-slate-900/50 p-3"><div class="flex flex-wrap gap-1.5">' + [['today', 'Hoy'], ['yesterday', 'Ayer'], ['week', 'Semana'], ['month', 'Mes'], ['all', 'Todo']].map(p => chip(p[1], a.preset === p[0], 'data-act="att-preset" data-v="' + p[0] + '"')).join('') + '</div>' +
+    '<div class="flex items-center gap-2 text-xs text-slate-400"><input type="date" data-chg="att-from" value="' + esc(a.from) + '" class="' + INPC + '"> a <input type="date" data-chg="att-to" value="' + esc(a.to) + '" class="' + INPC + '"></div>' +
+    sel(courseOpts(), a.course, 'data-chg="att-course"') + sel(estados, a.estado, 'data-chg="att-estado"') +
+    '<input type="search" data-inp="att-q" value="' + esc(a.q) + '" placeholder="Buscar trabajador…" class="' + INPC + ' w-48"><label class="flex items-center gap-2 text-sm text-slate-400"><input type="checkbox" data-chg="att-inc" class="accent-sky-500"' + (a.onlyInc ? ' checked' : '') + '> Solo con incidencias</label></div>' +
+    '<div id="att-body" class="space-y-4">' + attBody() + '</div></div>';
+}
+
+/* ---------------- Historial por empleado / auditoría ---------------- */
+function histRecs() {
+  const h = S.hist, range = { from: h.from || '0000-00-00', to: h.to || '9999-99-99' };
+  return S.model.records.filter(r => r.email === h.email && inRange(r.dateKey, range)).sort((a, b) => b.entryTs - a.entryTs);
+}
+function histTrackDates() {
+  const h = S.hist, range = { from: h.from || '0000-00-00', to: h.to || '9999-99-99' };
+  return Object.keys(S.model.track[h.email] || {}).filter(d => inRange(d, range)).sort().reverse();
+}
+function histBody() {
+  const M = S.model, h = S.hist, emp = empOf(h.email); if (!emp) return '<p class="text-slate-500">Selecciona un empleado.</p>';
+  const recs = histRecs(), tdates = histTrackDates();
+  if (!tdates.includes(h.trackDate)) h.trackDate = tdates[0] || '';
+  const range = { from: h.from || '0000-00-00', to: h.to || '9999-99-99' };
+  const pts = tdates.reduce((s, d) => s + M.track[h.email][d].length, 0);
+  const inc = recs.reduce((s, r) => s + r.inc, 0);
+  const prof = card('<div class="flex flex-wrap items-center gap-4 p-5"><span class="grid h-14 w-14 place-items-center rounded-full bg-sky-500/15 text-lg font-semibold text-sky-300">' + esc(emp.initials) + '</span><div class="min-w-0 flex-1"><p class="text-lg font-semibold text-white">' + esc(emp.name) + '</p><p class="text-sm text-slate-500">' + esc(emp.puesto || 'Sin puesto') + ' · ' + esc(emp.email) + '</p><div class="mt-2 flex flex-wrap gap-1.5">' + (emp.course ? badge(esc(emp.course), 'info') : '') + '</div></div><dl class="grid grid-cols-1 gap-1 text-xs text-slate-500"><div>Cel: <span class="text-slate-300">' + esc(emp.cell || '—') + '</span></div><div>Seguro: <span class="text-slate-300">' + esc(emp.seguro || '—') + '</span></div><div>Dirección: <span class="text-slate-300">' + esc(emp.direccion || '—') + '</span></div></dl></div>');
+  const kp = '<div class="grid grid-cols-2 gap-4 lg:grid-cols-5">' + kpi({ label: 'Días trabajados', value: new Set(recs.map(r => r.dateKey)).size, sub: recs.length + ' jornadas', icon: 'clip', tone: 'sky' }) + kpi({ label: 'Horas totales', value: fmtH(recs.reduce((s, r) => s + r.totEff, 0)), sub: 'Extras ' + fmtH(recs.reduce((s, r) => s + r.extEff, 0)), icon: 'clock', tone: 'violet' }) + kpi({ label: 'Incidencias', value: inc, sub: recs.filter(r => r.inc).length + ' jornadas afectadas', icon: 'alert', tone: inc ? 'rose' : 'emerald' }) + kpi({ label: 'Marcas sin ubicación', value: recs.reduce((s, r) => s + r.flags.filter(f => f.code === 'SIN_UBIC').length, 0), sub: 'En el rango seleccionado', icon: 'pin', tone: 'amber' }) + kpi({ label: 'Puntos GPS', value: pts, sub: tdates.length + ' días con rastreo', icon: 'pin', tone: 'amber' }) + '</div>';
+  const tabs = [['jornadas', 'Jornadas'], ['rastreo', 'Rastreo GPS'], ['incidencias', 'Incidencias']];
+  const tabBar = '<div class="flex flex-wrap gap-1.5">' + tabs.map(t => chip(t[1], h.tab === t[0], 'data-act="hist-tab" data-v="' + t[0] + '"')).join('') + '</div>';
+  let body = '';
+  if (h.tab === 'jornadas') {
+    body = '<div class="overflow-auto rounded-2xl border border-slate-800/80 bg-slate-900/50" style="max-height:65vh"><table class="tbl w-full min-w-[900px] text-sm"><thead><tr>' + ['Fecha', 'Entrada', 'Ubic. entrada', 'Salida', 'Ubic. salida', 'H. ord.', 'H. extra', 'Total', 'Estado'].map(x => '<th class="' + TH + '">' + x + '</th>').join('') + '</tr></thead><tbody>' + (recs.map(r => '<tr class="border-t border-slate-800/70"><td class="' + TD + ' whitespace-nowrap">' + fmtDS(r.dateKey) + '</td><td class="' + TD + '">' + hm(r.entrySec) + '</td><td class="' + TD + '">' + geoBadge(r.geo.entry) + '</td><td class="' + TD + '">' + (r.hasExit ? hm(r.exitSec) : '—') + '</td><td class="' + TD + '">' + geoBadge(r.geo.exit) + '</td><td class="' + TD + '">' + fmtH(r.ordEff) + '</td><td class="' + TD + '">' + fmtH(r.extEff) + (r.hasExtra ? '<div class="text-xs text-slate-500">' + hm(r.xinSec) + ' → ' + (r.xoutSec != null ? hm(r.xoutSec) : '…') + '</div>' : '') + '</td><td class="' + TD + ' font-medium text-slate-100">' + fmtH(r.totEff) + '</td><td class="' + TD + '">' + estadoBadge(r) + '</td></tr>').join('') || '<tr><td colspan="9" class="p-8 text-center text-slate-500">Sin jornadas en el rango.</td></tr>') + '</tbody></table></div>';
+  } else if (h.tab === 'rastreo') {
+    const day = h.trackDate ? (M.track[h.email] || {})[h.trackDate] || [] : [], st = Core.trackStats(day);
+    body = '<div class="grid gap-4 xl:grid-cols-3">' + card(cardHead('Recorrido del día', 'Línea azul: recorrido GPS · verde: inicio · rojo: fin · morado: geocerca · pasa el puntero o pulsa un punto para ver la hora', sel(tdates.map(d => [d, fmtDS(d) + ' · ' + M.track[h.email][d].length + ' pts']), h.trackDate, 'data-chg="hist-trackdate"')) + '<div class="p-4"><div id="map-hist" class="h-[420px] overflow-hidden rounded-xl"></div></div>', 'xl:col-span-2') +
+      card(cardHead('Coordenadas registradas', day.length ? st.n + ' puntos · ' + hm(st.first) + ' a ' + hm(st.last) + ' · recorrido aprox. ' + Core.fmtDist(st.dist) : 'Sin puntos') + '<div class="max-h-[440px] overflow-auto px-2 pb-4 pt-2"><table class="tbl w-full text-xs"><thead><tr><th class="' + TH + '">Hora</th><th class="' + TH + '">Latitud</th><th class="' + TH + '">Longitud</th><th class="' + TH + '"></th></tr></thead><tbody>' + day.slice(0, 500).map(p => '<tr class="border-t border-slate-800/70"><td class="px-3 py-1.5">' + Core.hms(p.sec) + '</td><td class="px-3 py-1.5">' + (p.valid ? p.lat.toFixed(6) : '—') + '</td><td class="px-3 py-1.5">' + (p.valid ? p.lng.toFixed(6) : '—') + '</td><td class="px-3 py-1.5">' + (p.valid ? '<a target="_blank" rel="noopener" class="text-sky-400" href="https://www.google.com/maps?q=' + p.lat + ',' + p.lng + '">mapa</a>' : '') + '</td></tr>').join('') + '</tbody></table></div>') + '</div>';
+  } else {
+    const items = recs.filter(r => r.flags.length);
+    body = card('<div class="divide-y divide-slate-800/70">' + (items.map(r => '<div class="flex flex-wrap items-center gap-3 px-5 py-3"><span class="w-24 text-sm text-slate-300">' + fmtDS(r.dateKey) + '</span><div class="flex flex-1 flex-wrap gap-1.5">' + r.flags.map(f => '<span title="' + esc(f.detail) + '">' + badge(esc(f.txt) + (f.detail ? ' · ' + esc(f.detail) : ''), f.lvl === 'danger' ? 'bad' : f.lvl === 'warn' ? 'warn' : 'info') + '</span>').join('') + '</div></div>').join('') || '<p class="p-8 text-center text-slate-500">Sin incidencias en el rango.</p>') + '</div>');
+  }
+  return prof + kp + tabBar + body;
+}
+function viewHist() {
+  if (!S.model) return emptyState(); const M = S.model, h = S.hist, emp = empOf(h.email);
+  return '<div class="space-y-5">' + pageHead('Historial por Empleado / Auditoría', 'Jornadas, marcaciones y rastreo GPS de cada trabajador', '') +
+    '<div class="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-800/80 bg-slate-900/50 p-3"><label class="text-xs text-slate-400">Empleado<br><input list="emp-list" data-chg="hist-email" value="' + esc(emp ? emp.name + ' · ' + emp.email : '') + '" placeholder="Escribe para buscar…" class="mt-1 w-72 ' + INPC + '"></label><datalist id="emp-list">' + M.employees.map(e => '<option value="' + esc(e.name + ' · ' + e.email) + '">').join('') + '</datalist>' +
+    '<label class="text-xs text-slate-400">Desde<br><input type="date" data-chg="hist-from" value="' + esc(h.from) + '" class="mt-1 ' + INPC + '"></label><label class="text-xs text-slate-400">Hasta<br><input type="date" data-chg="hist-to" value="' + esc(h.to) + '" class="mt-1 ' + INPC + '"></label><button data-act="hist-clear" class="' + BTN + '">Todo el historial</button></div>' +
+    '<div id="hist-body" class="space-y-5">' + histBody() + '</div></div>';
+}
+function initHistMap() {
+  const el = $('#map-hist'); if (!el) return; const M = S.model, h = S.hist;
+  const all = (M.track[h.email] || {})[h.trackDate] || [], pts = all.filter(p => p.valid);
+  if (!pts.length) { el.innerHTML = noMap('Sin puntos GPS válidos para este día.'); return; }
+  if (typeof L === 'undefined') { el.innerHTML = noMap(); return; }
+  el.style.height = '420px';
+  el.getBoundingClientRect();
+  const map = L.map(el); S.maps.hist = map; addBaseMap(map);
+  const line = pts.map(p => [p.lat, p.lng]), bounds = L.latLngBounds();
+  line.forEach(ll => bounds.extend(ll));
+  L.polyline(line, { color: '#38bdf8', weight: 3, opacity: .85 }).addTo(map);
+  const timePopup = (label, sec) => '<strong>' + esc(label) + '</strong><br>Hora: ' + esc(Core.hms(sec));
+  const gpsTimePopup = (point, label) => {
+    const nearby = pts.filter(p => Core.haversine(point.lat, point.lng, p.lat, p.lng) <= 20);
+    if (nearby.length < 2) return timePopup(label || 'Geolocalización', point.sec);
+    return '<strong>Geolocalizaciones cercanas (' + nearby.length + ')</strong><br>Horas:<br>' +
+      nearby.map(p => esc(Core.hms(p.sec))).join('<br>');
+  };
+  const bindTime = (marker, label, sec, content) => marker
+    .bindTooltip(content || timePopup(label, sec), { direction: 'top', sticky: true, opacity: .95, interactive: false })
+    .bindPopup(content || timePopup(label, sec));
+  pts.forEach(p => bindTime(
+    L.circleMarker([p.lat, p.lng], { radius: 7, color: '#38bdf8', weight: 2, fillColor: '#0b1220', fillOpacity: 1 }),
+    'Geolocalización', p.sec, gpsTimePopup(p)
+  ).addTo(map));
+  const start = pts[0], end = pts[pts.length - 1];
+  bindTime(L.circleMarker([start.lat, start.lng], { radius: 8, color: '#0b1220', weight: 2, fillColor: '#34d399', fillOpacity: 1 }),
+    'Inicio del recorrido', start.sec, gpsTimePopup(start, 'Inicio del recorrido')).addTo(map);
+  bindTime(L.circleMarker([end.lat, end.lng], { radius: 8, color: '#0b1220', weight: 2, fillColor: '#fb7185', fillOpacity: 1 }),
+    'Fin del recorrido', end.sec, gpsTimePopup(end, 'Fin del recorrido')).addTo(map);
+  M.records.filter(r => r.email === h.email && r.dateKey === h.trackDate).forEach(r => {
+    [['entry', 'Entrada', '#22d3ee', r.entrySec], ['exit', 'Salida', '#fbbf24', r.exitSec]].forEach(m => {
+      const g = r.geo[m[0]];
+      if (g && g.valid) {
+        const ll = [g.lat, g.lng]; bounds.extend(ll);
+        bindTime(L.circleMarker(ll, { radius: 6, color: m[2], weight: 3, fillColor: '#0b1220', fillOpacity: 1 }),
+          m[1], m[3]).addTo(map);
+      }
+    });
+  });
+  const emp = empOf(h.email), fence = emp && M.fence(emp.course);
+  if (fence) {
+    const circle = L.circle([fence.lat, fence.lng], { radius: fence.radius, color: '#a78bfa', weight: 2, dashArray: '6 5', fillColor: '#a78bfa', fillOpacity: .08 })
+      .addTo(map);
+    const latOffset = fence.radius / 111320;
+    const lngOffset = fence.radius / (111320 * Math.max(Math.abs(Math.cos(fence.lat * Math.PI / 180)), 0.01));
+    bounds.extend([fence.lat - latOffset, fence.lng - lngOffset]);
+    bounds.extend([fence.lat + latOffset, fence.lng + lngOffset]);
+  }
+  map.invalidateSize({ pan: false });
+  if (bounds.isValid()) map.fitBounds(bounds, { padding: [30, 30], maxZoom: 17 });
+  else map.setView(line[0], 15);
+}
+
+/* ---------------- Configuración ---------------- */
+const FB_RULES = '{\n  "rules": {\n    "gea": {\n      ".read": "auth != null",\n      ".write": "auth != null && auth.token.email === \'TU_CORREO_ADMIN@gmail.com\'"\n    }\n  }\n}';
+function openSettings() {
+  const M = S.model, c = S.cfg, stored = loadLS(LS.fb, null), hasConst = !!(FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.databaseURL);
+  const gf = M ? M.courses.map(course => { const g = c.geofences[course] || {}, ce = M.centers[course]; return '<tr data-fence="' + esc(course) + '" class="border-t border-slate-800/70"><td class="px-2 py-2 font-medium text-slate-200">' + esc(course) + '</td><td class="px-2 py-2">' + sel([['auto', 'Automática'], ['manual', 'Manual'], ['off', 'Desactivada']], g.mode || 'auto', 'data-f="mode"') + '</td><td class="px-2 py-2"><input data-f="lat" value="' + esc(g.lat == null ? '' : g.lat) + '" placeholder="' + (ce ? ce.lat.toFixed(5) : 'lat') + '" class="w-28 ' + INPC + '"></td><td class="px-2 py-2"><input data-f="lng" value="' + esc(g.lng == null ? '' : g.lng) + '" placeholder="' + (ce ? ce.lng.toFixed(5) : 'lng') + '" class="w-28 ' + INPC + '"></td><td class="px-2 py-2"><input data-f="radius" value="' + esc(g.radius == null ? '' : g.radius) + '" placeholder="' + c.defaultRadius + '" class="w-20 ' + INPC + '"></td></tr>'; }).join('') : '';
+  const num = (id, label, v) => '<label class="text-xs text-slate-400">' + label + '<input id="' + id + '" type="number" value="' + esc(v) + '" class="mt-1 block w-full ' + INPC + '"></label>';
+  const fbSec = '<section><h4 class="mb-1 text-sm font-semibold text-slate-200">Firebase (sincronización en tiempo real)</h4>' +
+    (hasConst ? '<p class="mb-2 rounded-lg bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">La configuración de Firebase está incluida en el código (FIREBASE_CONFIG). Es la que usan todos los visitantes.</p>' :
+      '<p class="mb-2 text-xs text-slate-500">Pega la configuración web de tu proyecto (Firebase → Configuración del proyecto → Tus apps → Configuración del SDK). Debe incluir <b>databaseURL</b> (crea una “Realtime Database”). Para que la usen todos desde GitHub, copia esos mismos valores en <b>FIREBASE_CONFIG</b> al inicio del script.</p><textarea id="cfg-fb" rows="7" placeholder="const firebaseConfig = {\n  apiKey: &quot;…&quot;,\n  authDomain: &quot;…&quot;,\n  databaseURL: &quot;https://TU-PROYECTO-default-rtdb.firebaseio.com&quot;,\n  projectId: &quot;…&quot;,\n  appId: &quot;…&quot;\n};" class="w-full font-mono text-xs ' + INPC + '">' + esc(stored && stored.apiKey ? JSON.stringify(stored, null, 2) : '') + '</textarea>') +
+    '<label class="mt-3 flex items-center gap-2 text-sm text-slate-300"><input id="cfg-autopub" type="checkbox" class="accent-sky-500"' + (c.autoPublish ? ' checked' : '') + '> Publicar automáticamente al cargar un Excel (si tengo sesión iniciada)</label>' +
+    '<details class="mt-3 text-xs text-slate-400"><summary class="cursor-pointer text-sky-400">Reglas recomendadas de la base de datos</summary><p class="my-2">En Firebase → Realtime Database → Reglas. Todos inician sesión para ver; solo tu correo de administrador puede publicar. Crea los usuarios en Authentication → “Correo/contraseña”.</p><pre class="overflow-auto rounded-lg bg-slate-950 p-3 text-[11px] text-slate-300">' + esc(FB_RULES) + '</pre></details></section>';
+  $('#modal-root').innerHTML = '<div data-act="close-modal" data-self="1" class="fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-black/70 p-4 sm:p-10"><div class="fade-in w-full max-w-3xl rounded-2xl border border-slate-700 bg-ink-900 p-6 shadow-2xl"><div class="flex items-center justify-between"><h3 class="text-lg font-semibold text-white">Configuración</h3><button data-act="close-modal" class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800">' + ico('x', 'h-5 w-5') + '</button></div><div class="mt-5 space-y-6">' + fbSec +
+    '<section><h4 class="mb-2 text-sm font-semibold text-slate-200">Reglas de validación</h4><div class="grid gap-4 sm:grid-cols-4">' + num('cfg-maxord', 'Jornada ordinaria máx. (h)', c.maxOrd) + num('cfg-maxext', 'Extra máx. (h)', c.maxExtra) + num('cfg-rad', 'Radio por defecto (m)', c.defaultRadius) + num('cfg-refresh', 'Auto-actualizar archivo (s, 0=off)', c.refreshSec) + '</div><div class="mt-3 flex flex-wrap items-center gap-6 text-sm text-slate-300"><label class="flex items-center gap-2"><input id="cfg-fix" type="checkbox" class="accent-sky-500"' + (c.fixDates ? ' checked' : '') + '> Corregir fechas con día/mes invertidos</label><label class="flex items-center gap-2">Fechas de texto ambiguas: ' + sel([['MDY', 'Mes/Día/Año'], ['DMY', 'Día/Mes/Año']], c.textDateOrder, 'id="cfg-order"') + '</label></div></section>' +
+    '<section><h4 class="mb-1 text-sm font-semibold text-slate-200">Geocercas por sitio</h4><p class="mb-2 text-xs text-slate-500">“Automática” usa el centro (mediana) de las marcas del sitio. Para una validación estricta, define latitud, longitud y radio reales de cada obra.</p>' + (gf ? '<div class="overflow-auto"><table class="w-full text-sm"><thead><tr><th class="' + TH + '">Sitio</th><th class="' + TH + '">Modo</th><th class="' + TH + '">Latitud</th><th class="' + TH + '">Longitud</th><th class="' + TH + '">Radio (m)</th></tr></thead><tbody>' + gf + '</tbody></table></div>' : '<p class="text-sm text-slate-500">Carga primero un archivo.</p>') + '</section>' +
+    '<section><h4 class="mb-2 text-sm font-semibold text-slate-200">Datos locales</h4><button data-act="clear-cache" class="' + BTN + '">Borrar datos guardados en este navegador</button></section></div><div class="mt-6 flex justify-end gap-2"><button data-act="close-modal" class="' + BTN + '">Cancelar</button><button data-act="save-settings" class="' + BTNP + '">Guardar</button></div></div></div>';
+}
+const closeModal = () => { $('#modal-root').innerHTML = ''; };
+function saveSettings() {
+  const n = (id, d) => { const v = parseFloat($('#' + id).value); return isNaN(v) ? d : v; };
+  const gf = {};
+  $$('[data-fence]').forEach(tr => { const g = k => $('[data-f=' + k + ']', tr).value.trim(); gf[tr.dataset.fence] = { mode: g('mode'), lat: g('lat'), lng: g('lng'), radius: g('radius') }; });
+  let reload = false; const fbEl = $('#cfg-fb');
+  if (fbEl) {
+    const txt = fbEl.value.trim(), o = {};
+    txt.replace(/["']?([A-Za-z]+)["']?\s*:\s*["']([^"']+)["']/g, (m, k, v) => { o[k] = v; return m; });
+    if (txt && !(o.apiKey && o.databaseURL)) { toast('Falta apiKey o databaseURL. Crea una Realtime Database en tu proyecto y copia su URL.', 'bad'); return; }
+    const prev = JSON.stringify(loadLS(LS.fb, null) || {});
+    if (txt) saveLS(LS.fb, o); else { try { localStorage.removeItem(LS.fb); } catch (e) { /* noop */ } }
+    reload = JSON.stringify(txt ? o : {}) !== prev;
+  }
+  S.cfg = Object.assign({}, S.cfg, { maxOrd: n('cfg-maxord', 12), maxExtra: n('cfg-maxext', 12), defaultRadius: n('cfg-rad', 1500), refreshSec: n('cfg-refresh', 60), fixDates: $('#cfg-fix').checked, textDateOrder: $('#cfg-order').value, autoPublish: !!$('#cfg-autopub').checked, geofences: gf });
+  saveLS(LS.cfg, S.cfg);
+  rebuild(); startTimer(); closeModal(); renderView(); toast('Configuración guardada y datos recalculados.', 'ok');
+  if (reload && typeof location !== 'undefined') { toast('Reconectando con Firebase…', 'info'); setTimeout(() => location.reload(), 900); }
+}
+
+/* ---------------- Render y navegación ---------------- */
+const VIEWS = { dashboard: viewDashboard, registro: viewReg, asistencia: viewAtt, historial: viewHist };
+const AFTER = { dashboard: afterDashboard, historial: () => { if (S.hist.tab === 'rastreo') initHistMap(); } };
+const NAV = [['dashboard', 'Dashboard General', 'dash'], ['registro', 'Registro y Actualización', 'users'], ['asistencia', 'Validación Diaria', 'clip'], ['historial', 'Historial / Auditoría', 'user']];
+function updateChrome() {
+  const nav = $('#nav'); if (!nav) return;
+  nav.innerHTML = NAV.map(n => '<button data-act="nav" data-view="' + n[0] + '" class="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition ' + (S.view === n[0] ? 'bg-sky-500/10 text-sky-300 ring-1 ring-sky-500/20' : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-200') + '">' + ico(n[2], 'h-5 w-5') + n[1] + '</button>').join('');
+  const cur = NAV.find(n => n[0] === S.view); $('#page-title').textContent = cur ? cur[1] : '';
+  $('#page-sub').textContent = S.model ? S.model.records.length + ' jornadas · ' + S.model.employees.length + ' empleados · ' + S.model.trackCount + ' puntos GPS' : 'Sin datos cargados';
+  const f = S.fb;
+  $('#hdr-actions').innerHTML = '<button data-act="load" class="' + BTNP + '">' + ico('upload', 'h-4 w-4') + '<span class="hidden sm:inline">Cargar Excel</span></button>' +
+    (f.status !== 'off' ? (f.user ? '<button data-act="fb-publish" class="' + BTN + '" title="Publicar los datos cargados para todos los usuarios">' + ico('cloud', 'h-4 w-4') + '<span class="hidden md:inline">Publicar</span></button>' : '<button data-act="fb-open-login" class="' + BTN + '">' + ico('cloud', 'h-4 w-4') + '<span class="hidden md:inline">Acceso</span></button>') : '') +
+    (window.showOpenFilePicker ? '<button data-act="connect" class="' + BTN + '">' + ico('plug', 'h-4 w-4') + '<span class="hidden lg:inline">Conectar archivo</span></button>' : '') +
+    '<button data-act="refresh" class="' + BTN + '" title="Releer la fuente de datos">' + ico('refresh', 'h-4 w-4') + '</button><button data-act="settings" class="' + BTN + '" aria-label="Configuración">' + ico('cog', 'h-4 w-4') + '</button>';
+  const s = S.source, fbDot = f.status === 'ready' ? 'bg-emerald-400' : f.status === 'error' ? 'bg-rose-400' : 'bg-amber-400';
+  const fbLine = f.status === 'off' ? '' : '<p class="mt-1.5 flex items-center gap-1.5"><span class="h-2 w-2 rounded-full ' + fbDot + '"></span>Firebase: ' + ({ ready: 'en tiempo real', connecting: 'conectando…', login: 'requiere sesión', error: 'error' }[f.status] || f.status) + '</p>' + (f.user ? '<p class="truncate">' + esc(f.user.email || '') + '</p>' : '');
+  $('#src-status').innerHTML = S.model ? '<p class="font-medium text-slate-300">Fuente de datos</p><p class="mt-0.5 truncate">' + esc(s.name || 'Guardado en este navegador') + '</p><p class="mt-0.5">' + (s.at ? 'Actualizado ' + s.at.toLocaleTimeString('es-GT') : 'Último archivo cargado') + '</p>' + (s.type === 'url' || s.type === 'handle' ? '<p class="mt-1.5 flex items-center gap-1.5"><span class="h-2 w-2 rounded-full ' + (timer ? 'bg-emerald-400' : 'bg-slate-600') + '"></span>' + (timer ? 'Auto-actualiza cada ' + S.cfg.refreshSec + ' s' : 'Actualización manual') + '</p>' : '') + fbLine : '<p>Aún no hay datos. Carga tu Excel para comenzar.</p>' + fbLine;
+  const bm = $('#btn-menu'); if (bm && !bm.innerHTML) bm.innerHTML = ico('menu', 'h-5 w-5');
+}
+function renderView() {
+  killCharts(); killMaps(); const v = $('#view'); if (!v) return;
+  try {
+    v.innerHTML = '<div class="fade-in">' + VIEWS[S.view]() + '</div>';
+    if (AFTER[S.view]) AFTER[S.view]();
+  } catch (err) {
+    console.error(err); v.innerHTML = '<div class="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-6 text-sm text-rose-200"><p class="font-semibold">Ocurrió un error al dibujar la vista.</p><p class="mt-1 font-mono text-xs">' + esc(err && err.message) + '</p></div>';
+  }
+  updateChrome();
+}
+function renderAttBody() { const el = $('#att-body'); if (el) el.innerHTML = attBody(); }
+function renderHistBody() { killMaps(); const el = $('#hist-body'); if (el) { el.innerHTML = histBody(); if (S.hist.tab === 'rastreo') initHistMap(); } }
+const toggleMenu = () => { $('#sidebar').classList.toggle('-translate-x-full'); $('#backdrop').classList.toggle('hidden'); };
+const closeMenu = () => { $('#sidebar').classList.add('-translate-x-full'); $('#backdrop').classList.add('hidden'); };
+
+/* ---------------- Eventos ---------------- */
+const ACT = {
+  nav: t => { S.view = t.dataset.view; closeMenu(); renderView(); window.scrollTo(0, 0); },
+  menu: toggleMenu,
+  load: () => $('#file-input').click(),
+  connect: connectFile,
+  refresh: () => pollSource(true),
+  settings: () => openSettings(),
+  'close-modal': (t, e) => { if (t.dataset.self && e.target !== t) return; closeModal(); },
+  'save-settings': saveSettings,
+  preset: t => { S.filter.mode = t.dataset.v; renderView(); },
+  'att-preset': t => { setAttPreset(t.dataset.v); renderView(); },
+  'export-att': () => exportAtt(attFiltered()),
+  'open-hist': t => { S.hist.email = t.dataset.email; S.hist.trackDate = ''; S.view = 'historial'; renderView(); window.scrollTo(0, 0); },
+  'hist-tab': t => { S.hist.tab = t.dataset.v; renderView(); },
+  'hist-clear': () => { S.hist.from = ''; S.hist.to = ''; renderView(); },
+  'clear-cache': () => { try { localStorage.removeItem(LS.raw); } catch (e) { /* noop */ } S.raw = null; S.model = null; S.wb = null; S.fb.applied = 0; S.source = { type: null, name: '', handle: null, url: '', sig: '', at: null }; stopTimer(); closeModal(); renderView(); toast('Datos eliminados de este navegador.', 'info'); },
+  'fb-login': fbLogin,
+  'fb-logout': fbLogout,
+  'fb-open-login': () => openLogin(),
+  'fb-publish': () => fbPublish(false)
+};
+const CHG = {
+  'dash-from': t => { S.filter.from = t.value; renderView(); }, 'dash-to': t => { S.filter.to = t.value; renderView(); },
+  'dash-course': t => { S.filter.course = t.value; renderView(); },
+  'att-from': t => { S.att.from = t.value; S.att.preset = 'custom'; renderView(); }, 'att-to': t => { S.att.to = t.value; S.att.preset = 'custom'; renderView(); },
+  'att-course': t => { S.att.course = t.value; renderAttBody(); }, 'att-estado': t => { S.att.estado = t.value; renderAttBody(); }, 'att-inc': t => { S.att.onlyInc = t.checked; renderAttBody(); },
+  'reg-course': t => { S.reg.course = t.value; $('#reg-list').innerHTML = regList(); },
+  'hist-email': t => { const v = t.value.trim().toLowerCase(); const e = S.model.employees.find(x => (x.name + ' · ' + x.email).toLowerCase() === v) || S.model.employees.find(x => (x.name + ' ' + x.email).toLowerCase().indexOf(v) >= 0); if (e) { S.hist.email = e.email; S.hist.trackDate = ''; renderView(); } },
+  'hist-from': t => { S.hist.from = t.value; renderView(); }, 'hist-to': t => { S.hist.to = t.value; renderView(); },
+  'hist-trackdate': t => { S.hist.trackDate = t.value; renderHistBody(); }
+};
+const INP = {
+  'att-q': t => { S.att.q = t.value; renderAttBody(); },
+  'reg-q': t => { S.reg.q = t.value; $('#reg-list').innerHTML = regList(); }
+};
+function init() {
+  chartDefaults();
+  document.addEventListener('click', e => { const t = e.target.closest('[data-act]'); if (t && ACT[t.dataset.act]) ACT[t.dataset.act](t, e); });
+  document.addEventListener('change', e => { const t = e.target.closest('[data-chg]'); if (t && CHG[t.dataset.chg]) CHG[t.dataset.chg](t, e); });
+  document.addEventListener('input', e => { const t = e.target.closest('[data-inp]'); if (t && INP[t.dataset.inp]) INP[t.dataset.inp](t, e); });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeModal();
+    if (e.key === 'Enter' && e.target && (e.target.id === 'fb-email' || e.target.id === 'fb-pass')) fbLogin();
+  });
+  const fi = $('#file-input'); fi.addEventListener('change', async () => { const f = Array.from(fi.files); fi.value = ''; if (f.length) await loadFromInput(f); });
+  let dragN = 0; const dz = $('#dropzone');
+  window.addEventListener('dragenter', e => { e.preventDefault(); dragN++; dz.classList.remove('hidden'); dz.classList.add('grid'); });
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('dragleave', () => { dragN = Math.max(0, dragN - 1); if (!dragN) { dz.classList.add('hidden'); dz.classList.remove('grid'); } });
+  window.addEventListener('drop', async e => { e.preventDefault(); dragN = 0; dz.classList.add('hidden'); dz.classList.remove('grid'); const f = Array.from((e.dataTransfer && e.dataTransfer.files) || []); if (f.length) await loadFromInput(f); });
+  const cached = loadLS(LS.raw, null);
+  if (cached && cached.general) { S.raw = { base: cached.base || [], general: cached.general || [], rastreo: cached.rastreo || [], epp: [] }; try { rebuild(); } catch (err) { console.error(err); S.raw = null; S.model = null; } }
+  fbInit();
+  renderView();
+  if (S.fb.status === 'off' || S.fb.status === 'error') tryAutoLoad();
+}
+window.GEA = Object.assign(window.GEA || {}, { VIEWS, AFTER, ACT, CHG, INP, init, renderView, attFiltered, dashData, histBody, openSettings, saveSettings, updateChrome, fbInit, fbPublish, fbLogin, fbListen, regList });
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
+</script>
+</body>
+</html>
