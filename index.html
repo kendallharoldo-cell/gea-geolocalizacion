@@ -55,7 +55,7 @@
     </div>
     <div class="leading-tight">
       <p class="text-sm font-semibold text-white">GEA Guatemala</p>
-      <p class="text-xs text-slate-500">Mecánica de Suelos</p>
+      <p class="text-xs text-slate-500">GPS AUTOMATICO</p>
     </div>
   </div>
   <nav id="nav" class="flex-1 space-y-1 px-3"></nav>
@@ -401,7 +401,8 @@ const FIREBASE_CONFIG = {
 const FIREBASE_PATH = 'gea';          // nodo de la base de datos donde se publican los datos
 const FIREBASE_REQUIRE_LOGIN = true;  // true: todos inician sesión (recomendado: los datos tienen información personal)
 const TILE_SOURCES = [
-  { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles &copy; Esri &mdash; Sources: Esri, TomTom, Garmin, FAO, NOAA, USGS, &copy; OpenStreetMap contributors, and the GIS User Community' }
+  { url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' },
+  { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles &copy; Esri &mdash; Sources: Esri, OpenStreetMap contributors, and the GIS User Community' }
 ];
 const PALETTE = ['#38bdf8', '#34d399', '#fbbf24', '#f472b6', '#a78bfa', '#fb923c', '#2dd4bf', '#f87171'];
 const DOW = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
@@ -938,7 +939,7 @@ function histBody() {
     body = '<div class="overflow-auto rounded-2xl border border-slate-800/80 bg-slate-900/50" style="max-height:65vh"><table class="tbl w-full min-w-[900px] text-sm"><thead><tr>' + ['Fecha', 'Entrada', 'Ubic. entrada', 'Salida', 'Ubic. salida', 'H. ord.', 'H. extra', 'Total', 'Estado'].map(x => '<th class="' + TH + '">' + x + '</th>').join('') + '</tr></thead><tbody>' + (recs.map(r => '<tr class="border-t border-slate-800/70"><td class="' + TD + ' whitespace-nowrap">' + fmtDS(r.dateKey) + '</td><td class="' + TD + '">' + hm(r.entrySec) + '</td><td class="' + TD + '">' + geoBadge(r.geo.entry) + '</td><td class="' + TD + '">' + (r.hasExit ? hm(r.exitSec) : '—') + '</td><td class="' + TD + '">' + geoBadge(r.geo.exit) + '</td><td class="' + TD + '">' + fmtH(r.ordEff) + '</td><td class="' + TD + '">' + fmtH(r.extEff) + (r.hasExtra ? '<div class="text-xs text-slate-500">' + hm(r.xinSec) + ' → ' + (r.xoutSec != null ? hm(r.xoutSec) : '…') + '</div>' : '') + '</td><td class="' + TD + ' font-medium text-slate-100">' + fmtH(r.totEff) + '</td><td class="' + TD + '">' + estadoBadge(r) + '</td></tr>').join('') || '<tr><td colspan="9" class="p-8 text-center text-slate-500">Sin jornadas en el rango.</td></tr>') + '</tbody></table></div>';
   } else if (h.tab === 'rastreo') {
     const day = h.trackDate ? (M.track[h.email] || {})[h.trackDate] || [] : [], st = Core.trackStats(day);
-    body = '<div class="grid gap-4 xl:grid-cols-3">' + card(cardHead('Recorrido del día', 'Línea azul: recorrido GPS · verde: inicio · rojo: fin · morado: geocerca · pasa el puntero o pulsa un punto para ver la hora', sel(tdates.map(d => [d, fmtDS(d) + ' · ' + M.track[h.email][d].length + ' pts']), h.trackDate, 'data-chg="hist-trackdate"')) + '<div class="p-4"><div id="map-hist" class="h-[420px] overflow-hidden rounded-xl"></div></div>', 'xl:col-span-2') +
+    body = '<div class="grid gap-4 xl:grid-cols-3">' + card(cardHead('Recorrido del día', 'Línea azul: recorrido GPS · verde: inicio · rojo: fin · morado: geocerca', sel(tdates.map(d => [d, fmtDS(d) + ' · ' + M.track[h.email][d].length + ' pts']), h.trackDate, 'data-chg="hist-trackdate"')) + '<div class="p-4"><div id="map-hist" class="h-[420px] overflow-hidden rounded-xl"></div></div>', 'xl:col-span-2') +
       card(cardHead('Coordenadas registradas', day.length ? st.n + ' puntos · ' + hm(st.first) + ' a ' + hm(st.last) + ' · recorrido aprox. ' + Core.fmtDist(st.dist) : 'Sin puntos') + '<div class="max-h-[440px] overflow-auto px-2 pb-4 pt-2"><table class="tbl w-full text-xs"><thead><tr><th class="' + TH + '">Hora</th><th class="' + TH + '">Latitud</th><th class="' + TH + '">Longitud</th><th class="' + TH + '"></th></tr></thead><tbody>' + day.slice(0, 500).map(p => '<tr class="border-t border-slate-800/70"><td class="px-3 py-1.5">' + Core.hms(p.sec) + '</td><td class="px-3 py-1.5">' + (p.valid ? p.lat.toFixed(6) : '—') + '</td><td class="px-3 py-1.5">' + (p.valid ? p.lng.toFixed(6) : '—') + '</td><td class="px-3 py-1.5">' + (p.valid ? '<a target="_blank" rel="noopener" class="text-sky-400" href="https://www.google.com/maps?q=' + p.lat + ',' + p.lng + '">mapa</a>' : '') + '</td></tr>').join('') + '</tbody></table></div>') + '</div>';
   } else {
     const items = recs.filter(r => r.flags.length);
@@ -958,38 +959,20 @@ function initHistMap() {
   const all = (M.track[h.email] || {})[h.trackDate] || [], pts = all.filter(p => p.valid);
   if (!pts.length) { el.innerHTML = noMap('Sin puntos GPS válidos para este día.'); return; }
   if (typeof L === 'undefined') { el.innerHTML = noMap(); return; }
-  el.style.height = '420px';
-  el.getBoundingClientRect();
   const map = L.map(el); S.maps.hist = map; addBaseMap(map);
   const line = pts.map(p => [p.lat, p.lng]), bounds = L.latLngBounds();
   line.forEach(ll => bounds.extend(ll));
   L.polyline(line, { color: '#38bdf8', weight: 3, opacity: .85 }).addTo(map);
-  const timePopup = (label, sec) => '<strong>' + esc(label) + '</strong><br>Hora: ' + esc(Core.hms(sec));
-  const gpsTimePopup = (point, label) => {
-    const nearby = pts.filter(p => Core.haversine(point.lat, point.lng, p.lat, p.lng) <= 20);
-    if (nearby.length < 2) return timePopup(label || 'Geolocalización', point.sec);
-    return '<strong>Geolocalizaciones cercanas (' + nearby.length + ')</strong><br>Horas:<br>' +
-      nearby.map(p => esc(Core.hms(p.sec))).join('<br>');
-  };
-  const bindTime = (marker, label, sec, content) => marker
-    .bindTooltip(content || timePopup(label, sec), { direction: 'top', sticky: true, opacity: .95, interactive: false })
-    .bindPopup(content || timePopup(label, sec));
-  pts.forEach(p => bindTime(
-    L.circleMarker([p.lat, p.lng], { radius: 7, color: '#38bdf8', weight: 2, fillColor: '#0b1220', fillOpacity: 1 }),
-    'Geolocalización', p.sec, gpsTimePopup(p)
-  ).addTo(map));
+  pts.forEach(p => L.circleMarker([p.lat, p.lng], { radius: 3, color: '#38bdf8', weight: 1, fillColor: '#0b1220', fillOpacity: 1 }).addTo(map));
   const start = pts[0], end = pts[pts.length - 1];
-  bindTime(L.circleMarker([start.lat, start.lng], { radius: 8, color: '#0b1220', weight: 2, fillColor: '#34d399', fillOpacity: 1 }),
-    'Inicio del recorrido', start.sec, gpsTimePopup(start, 'Inicio del recorrido')).addTo(map);
-  bindTime(L.circleMarker([end.lat, end.lng], { radius: 8, color: '#0b1220', weight: 2, fillColor: '#fb7185', fillOpacity: 1 }),
-    'Fin del recorrido', end.sec, gpsTimePopup(end, 'Fin del recorrido')).addTo(map);
+  L.circleMarker([start.lat, start.lng], { radius: 8, color: '#0b1220', weight: 2, fillColor: '#34d399', fillOpacity: 1 }).addTo(map);
+  L.circleMarker([end.lat, end.lng], { radius: 8, color: '#0b1220', weight: 2, fillColor: '#fb7185', fillOpacity: 1 }).addTo(map);
   M.records.filter(r => r.email === h.email && r.dateKey === h.trackDate).forEach(r => {
     [['entry', 'Entrada', '#22d3ee', r.entrySec], ['exit', 'Salida', '#fbbf24', r.exitSec]].forEach(m => {
       const g = r.geo[m[0]];
       if (g && g.valid) {
         const ll = [g.lat, g.lng]; bounds.extend(ll);
-        bindTime(L.circleMarker(ll, { radius: 6, color: m[2], weight: 3, fillColor: '#0b1220', fillOpacity: 1 }),
-          m[1], m[3]).addTo(map);
+        L.circleMarker(ll, { radius: 6, color: m[2], weight: 3, fillColor: '#0b1220', fillOpacity: 1 }).addTo(map);
       }
     });
   });
@@ -997,12 +980,8 @@ function initHistMap() {
   if (fence) {
     const circle = L.circle([fence.lat, fence.lng], { radius: fence.radius, color: '#a78bfa', weight: 2, dashArray: '6 5', fillColor: '#a78bfa', fillOpacity: .08 })
       .addTo(map);
-    const latOffset = fence.radius / 111320;
-    const lngOffset = fence.radius / (111320 * Math.max(Math.abs(Math.cos(fence.lat * Math.PI / 180)), 0.01));
-    bounds.extend([fence.lat - latOffset, fence.lng - lngOffset]);
-    bounds.extend([fence.lat + latOffset, fence.lng + lngOffset]);
+    bounds.extend(circle.getBounds());
   }
-  map.invalidateSize({ pan: false });
   if (bounds.isValid()) map.fitBounds(bounds, { padding: [30, 30], maxZoom: 17 });
   else map.setView(line[0], 15);
 }
