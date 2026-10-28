@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#070b14">
-<title>GEA Guatemala · Control de Asistencia y Rastreo GPS</title>
+<title>GEA Guatemala · GEOLOCALIZACION EMPLEADOS</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%2338bdf8' d='M12 2 4 5v6c0 5 3.4 9 8 11 4.6-2 8-6 8-11V5l-8-3Z'/%3E%3C/svg%3E">
 <!-- Tailwind CSS -->
 <script src="https://cdn.tailwindcss.com"></script>
@@ -55,7 +55,7 @@
     </div>
     <div class="leading-tight">
       <p class="text-sm font-semibold text-white">GEA Guatemala</p>
-      <p class="text-xs text-slate-500">GPS AUTOMATICO</p>
+      <p class="text-xs text-slate-500">GEOLOCALIZACION EMPLEADOS</p>
     </div>
   </div>
   <nav id="nav" class="flex-1 space-y-1 px-3"></nav>
@@ -392,11 +392,11 @@ const TODAY = () => Core.todayKey();
 const DEFAULT_FILES = ['datos.xlsx', 'GPS GEA-GUATEMALA.xlsx'];
 /* ===== FIREBASE: pega aquí los valores de tu proyecto para que TODOS los visitantes se conecten ===== */
 const FIREBASE_CONFIG = {
-  apiKey: '',
-  authDomain: '',
-  databaseURL: '',   // ej. https://TU-PROYECTO-default-rtdb.firebaseio.com
-  projectId: '',
-  appId: ''
+  apiKey: 'AIzaSyBYOMyDCiKg8S0CIpPN9LWWchTgIsqDj-A',
+  authDomain: 'gea-geolocalizacion.firebaseapp.com',
+  databaseURL: 'https://gea-geolocalizacion-default-rtdb.firebaseio.com',
+  projectId: 'gea-geolocalizacion',
+  appId: '1:556196587344:web:d90091fc9e334ba2956e55'
 };
 const FIREBASE_PATH = 'gea';          // nodo de la base de datos donde se publican los datos
 const FIREBASE_REQUIRE_LOGIN = true;  // true: todos inician sesión (recomendado: los datos tienen información personal)
