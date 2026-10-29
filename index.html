@@ -401,8 +401,8 @@ const FIREBASE_CONFIG = {
 const FIREBASE_PATH = 'gea';          // nodo de la base de datos donde se publican los datos
 const FIREBASE_REQUIRE_LOGIN = true;  // true: todos inician sesión (recomendado: los datos tienen información personal)
 const TILE_SOURCES = [
-  { url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' },
-  { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles &copy; Esri &mdash; Sources: Esri, OpenStreetMap contributors, and the GIS User Community' }
+  { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles &copy; Esri &mdash; Sources: Esri, OpenStreetMap contributors, and the GIS User Community' },
+  { url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }
 ];
 const PALETTE = ['#38bdf8', '#34d399', '#fbbf24', '#f472b6', '#a78bfa', '#fb923c', '#2dd4bf', '#f87171'];
 const DOW = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
@@ -838,7 +838,8 @@ function dashMap() {
   const M = S.model, pts = M.employees.filter(e => (!S.filter.course || e.course === S.filter.course) && M.lastPoint[e.email]).map(e => ({ e, p: M.lastPoint[e.email] }));
   if (!pts.length) { el.innerHTML = noMap('Sin puntos GPS para mostrar.'); return; }
   if (typeof L === 'undefined') { el.innerHTML = noMap(); return; }
-  const map = L.map(el); S.maps.dash = map; addBaseMap(map);
+  const first = pts[0].p;
+  const map = L.map(el, { zoomAnimation: false, fadeAnimation: false }).setView([first.lat, first.lng], 15); S.maps.dash = map; addBaseMap(map);
   const b = [];
   pts.forEach((x, i) => { const ll = [x.p.lat, x.p.lng]; b.push(ll); L.circleMarker(ll, { radius: 9, color: '#0b1220', weight: 2, fillColor: PALETTE[i % 8], fillOpacity: 1 }).addTo(map); });
   map.fitBounds(b, { padding: [40, 40], maxZoom: 16 });
@@ -959,8 +960,8 @@ function initHistMap() {
   const all = (M.track[h.email] || {})[h.trackDate] || [], pts = all.filter(p => p.valid);
   if (!pts.length) { el.innerHTML = noMap('Sin puntos GPS válidos para este día.'); return; }
   if (typeof L === 'undefined') { el.innerHTML = noMap(); return; }
-  const map = L.map(el); S.maps.hist = map; addBaseMap(map);
   const line = pts.map(p => [p.lat, p.lng]), bounds = L.latLngBounds();
+  const map = L.map(el, { zoomAnimation: false, fadeAnimation: false }).setView(line[0], 15); S.maps.hist = map; addBaseMap(map);
   line.forEach(ll => bounds.extend(ll));
   L.polyline(line, { color: '#38bdf8', weight: 3, opacity: .85 }).addTo(map);
   pts.forEach(p => L.circleMarker([p.lat, p.lng], { radius: 3, color: '#38bdf8', weight: 1, fillColor: '#0b1220', fillOpacity: 1 }).addTo(map));
